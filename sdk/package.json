@@ -1,0 +1,37 @@
+{
+  "name": "@softseco/sentinel",
+  "version": "0.1.0",
+  "description": "TypeScript SDK for Sentinel — programmable compliance for Token-2022 tokenized assets (Transfer Hooks).",
+  "license": "Apache-2.0",
+  "author": "Joachim Szamborski (Softseco)",
+  "repository": { "type": "git", "url": "git+https://github.com/softseco/sentinel.git" },
+  "type": "commonjs",
+  "main": "./dist/index.js",
+  "module": "./dist/index.mjs",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.mjs",
+      "require": "./dist/index.js"
+    }
+  },
+  "files": ["dist", "LICENSE", "README.md"],
+  "publishConfig": { "access": "public" },
+  "scripts": {
+    "build": "tsup src/index.ts --format esm,cjs --dts --clean",
+    "typecheck": "tsc --noEmit",
+    "demo": "tsx examples/compliant-asset-demo.ts",
+    "prepublishOnly": "npm run build"
+  },
+  "dependencies": {
+    "@coral-xyz/anchor": "^0.31.0",
+    "@solana/spl-token": "^0.4.9",
+    "@solana/web3.js": "^1.98.0"
+  },
+  "devDependencies": {
+    "tsup": "^8.5.0",
+    "tsx": "^4.19.1",
+    "typescript": "^5.7.3"
+  }
+}
