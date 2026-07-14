@@ -157,6 +157,7 @@ export class SentinelClient {
       .accountsPartial({
         authority: this.payer.publicKey,
         mint,
+        policyConfig: this.policy(mint),
         wallet,
         allowEntry: this.allowEntry(mint, wallet),
         systemProgram: SystemProgram.programId,
@@ -170,6 +171,7 @@ export class SentinelClient {
       .accountsPartial({
         authority: this.payer.publicKey,
         mint,
+        policyConfig: this.policy(mint),
         wallet,
         allowEntry: this.allowEntry(mint, wallet),
       })
@@ -182,6 +184,7 @@ export class SentinelClient {
       .accountsPartial({
         authority: this.payer.publicKey,
         mint,
+        policyConfig: this.policy(mint),
         wallet,
         blockEntry: this.blockEntry(mint, wallet),
         systemProgram: SystemProgram.programId,
@@ -195,6 +198,7 @@ export class SentinelClient {
       .accountsPartial({
         authority: this.payer.publicKey,
         mint,
+        policyConfig: this.policy(mint),
         wallet,
         blockEntry: this.blockEntry(mint, wallet),
       })

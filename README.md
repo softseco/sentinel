@@ -10,7 +10,7 @@ an allowlist, a blocklist (sender *and* recipient), and a per-transfer limit —
 per-mint policy the issuer controls. Regulated and real-world-asset (RWA) tokens can enforce *who*
 may hold and move them, without giving up composability.
 
-> **Status: pre-alpha, in active development.** Built by Softseco.
+> **Status: `v1.0.0` — stable API, self-audited, validated on a local validator (not independently audited).** Built by Softseco.
 
 ## Why
 
@@ -71,8 +71,9 @@ tests/               integration tests (anchor test)
 
 ## Status
 
-`M0` gating spike ✅ · `M1` policy + allowlist/blocklist/limit ✅ · `M2` SDK on npm ✅ ·
-`M3` demo ✅ · `M4` launch — in progress. See [PROJECT_PLAN.md](./PROJECT_PLAN.md).
+**v1.0.0** — program + SDK + demo, 11 integration tests, self-audited before release
+(see [CHANGELOG.md](./CHANGELOG.md) · [SECURITY.md](./SECURITY.md)). Pre-alpha maturity:
+validated on a local validator, not independently audited. See [PROJECT_PLAN.md](./PROJECT_PLAN.md).
 
 ## Local development
 

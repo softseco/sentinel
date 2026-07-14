@@ -8,7 +8,7 @@ export type Sentinel = {
   "address": "4Lr94hphpGHq2VY6CRC5Yxq6k3gs9nSSzsh479hVU1Xw",
   "metadata": {
     "name": "sentinel",
-    "version": "0.1.0",
+    "version": "1.0.0",
     "spec": "0.1.0",
     "description": "Programmable compliance for Token-2022 tokenized assets, built on Transfer Hooks."
   },
@@ -32,10 +32,35 @@ export type Sentinel = {
         {
           "name": "authority",
           "writable": true,
-          "signer": true
+          "signer": true,
+          "relations": [
+            "policyConfig"
+          ]
         },
         {
           "name": "mint"
+        },
+        {
+          "name": "policyConfig",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  111,
+                  108,
+                  105,
+                  99,
+                  121
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              }
+            ]
+          }
         },
         {
           "name": "wallet"
@@ -92,10 +117,35 @@ export type Sentinel = {
         {
           "name": "authority",
           "writable": true,
-          "signer": true
+          "signer": true,
+          "relations": [
+            "policyConfig"
+          ]
         },
         {
           "name": "mint"
+        },
+        {
+          "name": "policyConfig",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  111,
+                  108,
+                  105,
+                  99,
+                  121
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              }
+            ]
+          }
         },
         {
           "name": "wallet"
@@ -289,10 +339,35 @@ export type Sentinel = {
         {
           "name": "authority",
           "writable": true,
-          "signer": true
+          "signer": true,
+          "relations": [
+            "policyConfig"
+          ]
         },
         {
           "name": "mint"
+        },
+        {
+          "name": "policyConfig",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  111,
+                  108,
+                  105,
+                  99,
+                  121
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              }
+            ]
+          }
         },
         {
           "name": "wallet"
@@ -345,10 +420,35 @@ export type Sentinel = {
         {
           "name": "authority",
           "writable": true,
-          "signer": true
+          "signer": true,
+          "relations": [
+            "policyConfig"
+          ]
         },
         {
           "name": "mint"
+        },
+        {
+          "name": "policyConfig",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  111,
+                  108,
+                  105,
+                  99,
+                  121
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              }
+            ]
+          }
         },
         {
           "name": "wallet"

@@ -8,6 +8,7 @@
 //!   - **allowlist** (when enabled): the recipient must have an `AllowEntry`
 //!   - **blocklist** (when enabled): neither sender nor recipient may have a `BlockEntry`
 use anchor_lang::prelude::*;
+use anchor_lang::solana_program::program_option::COption;
 use anchor_lang::system_program::{create_account, CreateAccount};
 use anchor_spl::token_interface::Mint;
 use spl_tlv_account_resolution::{
@@ -271,6 +272,9 @@ pub struct InitializePolicy<'info> {
     #[account(mut)]
     pub authority: Signer<'info>,
 
+    #[account(
+        constraint = mint.mint_authority == COption::Some(authority.key()) @ SentinelError::Unauthorized,
+    )]
     pub mint: InterfaceAccount<'info, Mint>,
 
     #[account(
@@ -314,6 +318,9 @@ pub struct InitializeExtraAccountMetaList<'info> {
     )]
     pub extra_account_meta_list: AccountInfo<'info>,
 
+    #[account(
+        constraint = mint.mint_authority == COption::Some(payer.key()) @ SentinelError::Unauthorized,
+    )]
     pub mint: InterfaceAccount<'info, Mint>,
     pub system_program: Program<'info, System>,
 }
@@ -324,6 +331,13 @@ pub struct AddToAllowlist<'info> {
     pub authority: Signer<'info>,
 
     pub mint: InterfaceAccount<'info, Mint>,
+
+    #[account(
+        seeds = [POLICY_SEED, mint.key().as_ref()],
+        bump = policy_config.bump,
+        has_one = authority @ SentinelError::Unauthorized,
+    )]
+    pub policy_config: Account<'info, PolicyConfig>,
 
     /// CHECK: the wallet being allowlisted (address only).
     pub wallet: UncheckedAccount<'info>,
@@ -347,6 +361,13 @@ pub struct RemoveFromAllowlist<'info> {
 
     pub mint: InterfaceAccount<'info, Mint>,
 
+    #[account(
+        seeds = [POLICY_SEED, mint.key().as_ref()],
+        bump = policy_config.bump,
+        has_one = authority @ SentinelError::Unauthorized,
+    )]
+    pub policy_config: Account<'info, PolicyConfig>,
+
     /// CHECK: the wallet being removed (address only).
     pub wallet: UncheckedAccount<'info>,
 
@@ -365,6 +386,13 @@ pub struct AddToBlocklist<'info> {
     pub authority: Signer<'info>,
 
     pub mint: InterfaceAccount<'info, Mint>,
+
+    #[account(
+        seeds = [POLICY_SEED, mint.key().as_ref()],
+        bump = policy_config.bump,
+        has_one = authority @ SentinelError::Unauthorized,
+    )]
+    pub policy_config: Account<'info, PolicyConfig>,
 
     /// CHECK: the wallet being blocklisted (address only).
     pub wallet: UncheckedAccount<'info>,
@@ -388,6 +416,13 @@ pub struct RemoveFromBlocklist<'info> {
 
     pub mint: InterfaceAccount<'info, Mint>,
 
+    #[account(
+        seeds = [POLICY_SEED, mint.key().as_ref()],
+        bump = policy_config.bump,
+        has_one = authority @ SentinelError::Unauthorized,
+    )]
+    pub policy_config: Account<'info, PolicyConfig>,
+
     /// CHECK: the wallet being removed (address only).
     pub wallet: UncheckedAccount<'info>,
 
@@ -403,6 +438,11 @@ pub struct RemoveFromBlocklist<'info> {
 /// Accounts for the Transfer Hook `Execute`. Order is fixed by the interface:
 /// source, mint, destination, source authority, meta-list PDA, then our declared
 /// extra accounts (policy, sender block, recipient block, recipient allow).
+///
+/// The entry accounts are bare `AccountInfo`: Token-2022 resolves them
+/// deterministically from the ExtraAccountMetaList (by mint + the token accounts'
+/// owner fields), and the hook only runs via Token-2022's CPI — so a caller
+/// cannot substitute a different allow/block entry.
 #[derive(Accounts)]
 pub struct TransferHook<'info> {
     /// CHECK: source token account

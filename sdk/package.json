@@ -1,6 +1,6 @@
 {
   "name": "@softseco/sentinel",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "TypeScript SDK for Sentinel — programmable compliance for Token-2022 tokenized assets (Transfer Hooks).",
   "license": "Apache-2.0",
   "author": "Joachim Szamborski (Softseco)",

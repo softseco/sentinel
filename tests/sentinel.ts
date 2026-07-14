@@ -173,6 +173,7 @@ describe("sentinel — policy rules", () => {
         authority: payer.publicKey,
         mint: mint.publicKey,
         wallet: allowed.publicKey,
+        policyConfig: policyPda,
         allowEntry: allowEntryPda(allowed.publicKey),
         systemProgram: SystemProgram.programId,
       })
@@ -210,6 +211,7 @@ describe("sentinel — policy rules", () => {
         authority: payer.publicKey,
         mint: mint.publicKey,
         wallet: sanctioned.publicKey,
+        policyConfig: policyPda,
         blockEntry: blockEntryPda(sanctioned.publicKey),
         systemProgram: SystemProgram.programId,
       })
@@ -222,5 +224,77 @@ describe("sentinel — policy rules", () => {
     // ...while a non-blocklisted recipient still receives.
     await transfer(ataOf(allowed.publicKey), 10);
     assert.equal(await balanceOf(allowed.publicKey), String(LIMIT + 10), "non-blocklisted recipient should still receive");
+  });
+
+  it("rejects allowlist writes from a non-authority", async () => {
+    const rando = Keypair.generate();
+    const outsider = Keypair.generate();
+    const airdrop = await connection.requestAirdrop(rando.publicKey, 1_000_000_000);
+    await connection.confirmTransaction(airdrop, "confirmed");
+
+    let rejected = false;
+    try {
+      await program.methods
+        .addToAllowlist()
+        .accountsPartial({
+          authority: rando.publicKey,
+          mint: mint.publicKey,
+          wallet: outsider.publicKey,
+          policyConfig: policyPda,
+          allowEntry: allowEntryPda(outsider.publicKey),
+          systemProgram: SystemProgram.programId,
+        })
+        .signers([rando])
+        .rpc(CONFIRM);
+    } catch (_e) {
+      rejected = true;
+    }
+    assert.isTrue(rejected, "only the policy authority may modify the allowlist");
+  });
+
+  it("rejects policy init by a non-mint-authority", async () => {
+    const mint2 = Keypair.generate();
+    const rando = Keypair.generate();
+    const air = await connection.requestAirdrop(rando.publicKey, 1_000_000_000);
+    await connection.confirmTransaction(air, "confirmed");
+
+    // Create a fresh mint whose mint authority is the payer.
+    const mintLen = getMintLen([ExtensionType.TransferHook]);
+    const lamports = await connection.getMinimumBalanceForRentExemption(mintLen);
+    await sendAndConfirmTransaction(
+      connection,
+      new Transaction().add(
+        SystemProgram.createAccount({
+          fromPubkey: payer.publicKey,
+          newAccountPubkey: mint2.publicKey,
+          space: mintLen,
+          lamports,
+          programId: TOKEN_2022_PROGRAM_ID,
+        }),
+        createInitializeTransferHookInstruction(mint2.publicKey, payer.publicKey, program.programId, TOKEN_2022_PROGRAM_ID),
+        createInitializeMintInstruction(mint2.publicKey, 0, payer.publicKey, null, TOKEN_2022_PROGRAM_ID)
+      ),
+      [payer, mint2],
+      CONFIRM
+    );
+
+    // A non-mint-authority tries to initialize the policy → rejected.
+    const policy2 = pda([Buffer.from("policy"), mint2.publicKey.toBuffer()]);
+    let rejected = false;
+    try {
+      await program.methods
+        .initializePolicy(true, false, new anchor.BN(100))
+        .accountsPartial({
+          authority: rando.publicKey,
+          mint: mint2.publicKey,
+          policyConfig: policy2,
+          systemProgram: SystemProgram.programId,
+        })
+        .signers([rando])
+        .rpc(CONFIRM);
+    } catch (_e) {
+      rejected = true;
+    }
+    assert.isTrue(rejected, "only the mint authority may initialize the policy");
   });
 });
