@@ -19,7 +19,7 @@ Please do **not** open a public issue, pull request, or social post for security
 
 1. **GitHub private vulnerability reporting** (preferred) — on the repo, **Security** tab →
    **Report a vulnerability**.
-2. **Email** — joachim.szamborski@gmail.com.
+2. **Email** — hello@softseco.com.
 
 Please include the impact, reproduction steps / PoC, affected version(s), and any suggested fix.
 We aim to acknowledge within **72 hours**.
