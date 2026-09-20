@@ -54,7 +54,13 @@ async function main() {
   line(`   mint: ${mint.toBase58()}`);
 
   step("2. Set the compliance policy — allowlist ON, blocklist ON, max 1000 / transfer");
-  await sentinel.initializePolicy({ mint, allowlist: true, blocklist: true, maxTransferAmount: 1000 });
+  // `allowConfidential: false` is what makes the limit meaningful: a confidential transfer
+  // reaches the hook with an encrypted amount (Token-2022 passes u64::MAX), so a per-transfer
+  // limit cannot be checked against it. With the flag off, such transfers are rejected rather
+  // than waved through. Set it to true only if the limit is allowed not to apply to them.
+  await sentinel.initializePolicy({
+    mint, allowlist: true, blocklist: true, maxTransferAmount: 1000, allowConfidential: false,
+  });
   await sentinel.initializeExtraAccountMetaList(mint);
 
   step("3. Mint 10,000 ACME to the issuer");
@@ -86,7 +92,9 @@ async function main() {
   await attempt(sentinel, mint, "Issuer → Mallory  100   (allowlisted BUT sanctioned)", mallory.publicKey, 100, "recipient sanctioned");
 
   step("7. Issuer raises the per-transfer limit to 5000 (live policy update)");
-  await sentinel.updatePolicy({ mint, allowlist: true, blocklist: true, maxTransferAmount: 5000 });
+  await sentinel.updatePolicy({
+    mint, allowlist: true, blocklist: true, maxTransferAmount: 5000, allowConfidential: false,
+  });
   await attempt(sentinel, mint, "Issuer → Alice   2000   (now within the new limit)", alice.publicKey, 2000);
 
   step("Final cap table");

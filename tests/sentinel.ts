@@ -5,7 +5,9 @@
 // blocklist, and live policy updates.
 import * as anchor from "@coral-xyz/anchor";
 import { Program } from "@coral-xyz/anchor";
-import { Sentinel } from "../target/types/sentinel";
+// The committed IDL, the same one the SDK builds against. `target/types/` is a
+// build artifact and is not in the repository, so CI can typecheck this file.
+import { Sentinel } from "../sdk/src/idl/sentinel";
 import {
   ASSOCIATED_TOKEN_PROGRAM_ID,
   ExtensionType,
@@ -109,10 +111,41 @@ describe("sentinel — policy rules", () => {
     }
   };
 
-  const setPolicy = (allowlist: boolean, blocklist: boolean, limit: number) =>
+  const setPolicy = (
+    allowlist: boolean,
+    blocklist: boolean,
+    limit: number,
+    allowConfidential = false
+  ) =>
     program.methods
-      .updatePolicy(allowlist, blocklist, new anchor.BN(limit))
+      .updatePolicy(allowlist, blocklist, new anchor.BN(limit), allowConfidential)
       .accountsPartial({ authority: payer.publicKey, mint: mint.publicKey, policyConfig: policyPda })
+      .rpc(CONFIRM);
+
+  // Token-2022 invokes the transfer hook for a *confidential* transfer with
+  // amount = u64::MAX, because the real amount is encrypted and never reaches
+  // the hook. These tests drive that branch by calling `transfer_hook`
+  // directly: a genuine confidential transfer additionally needs the
+  // Token-2022 confidential-transfer extension and the ZK ElGamal Proof
+  // program on the validator, which is out of scope for this suite. What is
+  // under test here is the program's own decision for that amount, which is
+  // the part that can be wrong.
+  const U64_MAX = new anchor.BN("18446744073709551615");
+
+  const callHook = (amount: anchor.BN, destOwner: PublicKey) =>
+    program.methods
+      .transferHook(amount)
+      .accountsPartial({
+        sourceToken: ataOf(payer.publicKey),
+        mint: mint.publicKey,
+        destinationToken: ataOf(destOwner),
+        owner: payer.publicKey,
+        extraAccountMetaList: metaListPda,
+        policyConfig: policyPda,
+        sourceBlock: blockEntryPda(payer.publicKey),
+        destBlock: blockEntryPda(destOwner),
+        allowEntry: allowEntryPda(destOwner),
+      })
       .rpc(CONFIRM);
 
   it("creates a Token-2022 mint whose transfer hook is Sentinel", async () => {
@@ -139,7 +172,7 @@ describe("sentinel — policy rules", () => {
 
   it("initializes the policy (allowlist on, limit 100)", async () => {
     await program.methods
-      .initializePolicy(true, false, new anchor.BN(LIMIT))
+      .initializePolicy(true, false, new anchor.BN(LIMIT), false)
       .accountsPartial({
         authority: payer.publicKey,
         mint: mint.publicKey,
@@ -226,6 +259,55 @@ describe("sentinel — policy rules", () => {
     assert.equal(await balanceOf(allowed.publicKey), String(LIMIT + 10), "non-blocklisted recipient should still receive");
   });
 
+  it("refuses a confidential transfer on a mint that sets a limit", async () => {
+    // Limit on, allow_confidential off: the hook cannot see the amount, so it
+    // must refuse rather than wave the transfer through.
+    await setPolicy(false, false, LIMIT, false);
+
+    let code: number | undefined;
+    let name: string | undefined;
+    try {
+      await callHook(U64_MAX, allowed.publicKey);
+    } catch (e) {
+      const err = e as anchor.AnchorError;
+      code = err?.error?.errorCode?.number;
+      name = err?.error?.errorCode?.code;
+    }
+    assert.equal(name, "ConfidentialAmountNotEnforceable", "wrong error for an unenforceable limit");
+    assert.equal(code, 6005, "error code must stay stable for deployed clients");
+  });
+
+  it("permits a confidential transfer once the issuer opts in", async () => {
+    // Same limit, but the issuer has explicitly accepted that it cannot apply
+    // to encrypted amounts.
+    await setPolicy(false, false, LIMIT, true);
+    await callHook(U64_MAX, allowed.publicKey);
+  });
+
+  it("permits a confidential transfer when no limit is set", async () => {
+    // With max_transfer_amount = 0 there is no limit to be unenforceable, so
+    // the opt-in is irrelevant and the transfer passes either way.
+    await setPolicy(false, false, 0, false);
+    await callHook(U64_MAX, allowed.publicKey);
+  });
+
+  it("still enforces the allowlist on a confidential transfer", async () => {
+    // Confidentiality hides the amount, not the parties: the counterparty
+    // rules are unaffected and must keep applying.
+    await setPolicy(true, false, 0, false);
+
+    let name: string | undefined;
+    try {
+      await callHook(U64_MAX, blocked.publicKey); // never allowlisted
+    } catch (e) {
+      name = (e as anchor.AnchorError)?.error?.errorCode?.code;
+    }
+    assert.equal(name, "RecipientNotAllowlisted", "allowlist must still apply to a confidential transfer");
+
+    // ...and an allowlisted recipient still passes.
+    await callHook(U64_MAX, allowed.publicKey);
+  });
+
   it("rejects allowlist writes from a non-authority", async () => {
     const rando = Keypair.generate();
     const outsider = Keypair.generate();
@@ -283,7 +365,7 @@ describe("sentinel — policy rules", () => {
     let rejected = false;
     try {
       await program.methods
-        .initializePolicy(true, false, new anchor.BN(100))
+        .initializePolicy(true, false, new anchor.BN(100), false)
         .accountsPartial({
           authority: rando.publicKey,
           mint: mint2.publicKey,

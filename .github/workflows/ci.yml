@@ -1,0 +1,51 @@
+# SPDX-License-Identifier: Apache-2.0
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+
+jobs:
+  program:
+    name: program (fmt, clippy, unit)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all --check
+      - run: cargo clippy -p sentinel --all-targets -- -D warnings
+      # `anchor build` / `anchor test` need the Solana SBF toolchain and a local
+      # validator; they are run locally. See CONTRIBUTING.md.
+
+  tests:
+    name: tests (typecheck)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+      - run: npm ci
+      # Compiles tests/ against the committed IDL. Running them needs a local
+      # validator and the built program, so `anchor test` stays local.
+      - run: npx tsc --noEmit -p tsconfig.json
+
+  sdk:
+    name: sdk (typecheck, build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sdk
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - run: npm install
+      - run: npm run typecheck
+      - run: npm run build

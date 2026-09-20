@@ -30,6 +30,12 @@ export interface PolicyView {
   allowlistEnabled: boolean;
   blocklistEnabled: boolean;
   maxTransferAmount: bigint;
+  /**
+   * Whether confidential transfers are permitted on a mint that also sets
+   * `maxTransferAmount`. The hook cannot see an encrypted amount, so the limit
+   * is unenforceable for those transfers and the issuer opts in explicitly.
+   */
+  allowConfidential: boolean;
 }
 
 /**
@@ -109,9 +115,16 @@ export class SentinelClient {
     allowlist: boolean;
     blocklist: boolean;
     maxTransferAmount: bigint | number;
+    /** Permit confidential transfers even though the limit cannot apply to them. */
+    allowConfidential?: boolean;
   }): Promise<string> {
     return this.program.methods
-      .initializePolicy(params.allowlist, params.blocklist, new BN(params.maxTransferAmount.toString()))
+      .initializePolicy(
+        params.allowlist,
+        params.blocklist,
+        new BN(params.maxTransferAmount.toString()),
+        params.allowConfidential ?? false,
+      )
       .accountsPartial({
         authority: this.payer.publicKey,
         mint: params.mint,
@@ -127,9 +140,16 @@ export class SentinelClient {
     allowlist: boolean;
     blocklist: boolean;
     maxTransferAmount: bigint | number;
+    /** Permit confidential transfers even though the limit cannot apply to them. */
+    allowConfidential?: boolean;
   }): Promise<string> {
     return this.program.methods
-      .updatePolicy(params.allowlist, params.blocklist, new BN(params.maxTransferAmount.toString()))
+      .updatePolicy(
+        params.allowlist,
+        params.blocklist,
+        new BN(params.maxTransferAmount.toString()),
+        params.allowConfidential ?? false,
+      )
       .accountsPartial({
         authority: this.payer.publicKey,
         mint: params.mint,
@@ -257,6 +277,7 @@ export class SentinelClient {
       allowlistEnabled: acc.allowlistEnabled,
       blocklistEnabled: acc.blocklistEnabled,
       maxTransferAmount: BigInt(acc.maxTransferAmount.toString()),
+      allowConfidential: acc.allowConfidential,
     };
   }
 

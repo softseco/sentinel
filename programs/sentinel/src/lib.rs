@@ -7,6 +7,14 @@
 //!   - **limit**: `amount <= max_transfer_amount` (when `max_transfer_amount > 0`)
 //!   - **allowlist** (when enabled): the recipient must have an `AllowEntry`
 //!   - **blocklist** (when enabled): neither sender nor recipient may have a `BlockEntry`
+//!
+//! Confidential transfers are a special case. Token-2022 hides the amount from
+//! the hook, so the limit rule cannot be evaluated at all — it is unenforceable
+//! rather than satisfied. A mint that sets a limit therefore refuses
+//! confidential transfers unless its policy sets `allow_confidential`, which is
+//! the issuer explicitly accepting that the limit does not apply to them. The
+//! allowlist and blocklist rules work on addresses, so they apply to
+//! confidential transfers unchanged.
 use anchor_lang::prelude::*;
 use anchor_lang::solana_program::program_option::COption;
 use anchor_lang::system_program::{create_account, CreateAccount};
@@ -15,6 +23,12 @@ use spl_tlv_account_resolution::{
     account::ExtraAccountMeta, seeds::Seed, state::ExtraAccountMetaList,
 };
 use spl_transfer_hook_interface::instruction::{ExecuteInstruction, TransferHookInstruction};
+
+/// Token-2022 invokes the transfer hook for a **confidential** transfer with
+/// `amount` set to `u64::MAX`, because the real amount is encrypted and the
+/// program cannot see it. Treat this value as "amount unknown", never as a
+/// literal quantity.
+pub const CONFIDENTIAL_TRANSFER_AMOUNT: u64 = u64::MAX;
 
 declare_id!("4Lr94hphpGHq2VY6CRC5Yxq6k3gs9nSSzsh479hVU1Xw");
 
@@ -35,6 +49,7 @@ pub mod sentinel {
         allowlist_enabled: bool,
         blocklist_enabled: bool,
         max_transfer_amount: u64,
+        allow_confidential: bool,
     ) -> Result<()> {
         ctx.accounts.policy_config.set_inner(PolicyConfig {
             mint: ctx.accounts.mint.key(),
@@ -42,6 +57,7 @@ pub mod sentinel {
             allowlist_enabled,
             blocklist_enabled,
             max_transfer_amount,
+            allow_confidential,
             bump: ctx.bumps.policy_config,
         });
         Ok(())
@@ -53,11 +69,13 @@ pub mod sentinel {
         allowlist_enabled: bool,
         blocklist_enabled: bool,
         max_transfer_amount: u64,
+        allow_confidential: bool,
     ) -> Result<()> {
         let policy = &mut ctx.accounts.policy_config;
         policy.allowlist_enabled = allowlist_enabled;
         policy.blocklist_enabled = blocklist_enabled;
         policy.max_transfer_amount = max_transfer_amount;
+        policy.allow_confidential = allow_confidential;
         Ok(())
     }
 
@@ -72,7 +90,9 @@ pub mod sentinel {
             // index 5: policy config ["policy", mint]
             ExtraAccountMeta::new_with_seeds(
                 &[
-                    Seed::Literal { bytes: POLICY_SEED.to_vec() },
+                    Seed::Literal {
+                        bytes: POLICY_SEED.to_vec(),
+                    },
                     Seed::AccountKey { index: 1 },
                 ],
                 false,
@@ -81,7 +101,9 @@ pub mod sentinel {
             // index 6: sender block entry ["block", mint, source_owner]
             ExtraAccountMeta::new_with_seeds(
                 &[
-                    Seed::Literal { bytes: BLOCK_SEED.to_vec() },
+                    Seed::Literal {
+                        bytes: BLOCK_SEED.to_vec(),
+                    },
                     Seed::AccountKey { index: 1 },
                     Seed::AccountData {
                         account_index: 0, // source token account
@@ -95,7 +117,9 @@ pub mod sentinel {
             // index 7: recipient block entry ["block", mint, dest_owner]
             ExtraAccountMeta::new_with_seeds(
                 &[
-                    Seed::Literal { bytes: BLOCK_SEED.to_vec() },
+                    Seed::Literal {
+                        bytes: BLOCK_SEED.to_vec(),
+                    },
                     Seed::AccountKey { index: 1 },
                     Seed::AccountData {
                         account_index: 2, // destination token account
@@ -109,7 +133,9 @@ pub mod sentinel {
             // index 8: recipient allow entry ["allow", mint, dest_owner]
             ExtraAccountMeta::new_with_seeds(
                 &[
-                    Seed::Literal { bytes: ALLOW_SEED.to_vec() },
+                    Seed::Literal {
+                        bytes: ALLOW_SEED.to_vec(),
+                    },
                     Seed::AccountKey { index: 1 },
                     Seed::AccountData {
                         account_index: 2,
@@ -185,27 +211,50 @@ pub mod sentinel {
     /// Invoked by Token-2022 on every transfer. Enforces the mint's policy.
     pub fn transfer_hook(ctx: Context<TransferHook>, amount: u64) -> Result<()> {
         let policy = &ctx.accounts.policy_config;
+        let is_confidential = amount == CONFIDENTIAL_TRANSFER_AMOUNT;
 
-        // Limit rule.
+        // Limit rule. A confidential transfer hides its amount from the hook,
+        // so the limit cannot be checked. Refuse rather than wave it through,
+        // unless the policy has opted in to going without the limit.
         if policy.max_transfer_amount > 0 {
-            require!(
-                amount <= policy.max_transfer_amount,
-                SentinelError::TransferExceedsLimit
-            );
+            if is_confidential {
+                require!(
+                    policy.allow_confidential,
+                    SentinelError::ConfidentialAmountNotEnforceable
+                );
+            } else {
+                require!(
+                    amount <= policy.max_transfer_amount,
+                    SentinelError::TransferExceedsLimit
+                );
+            }
         }
 
         // Blocklist rule (neither party may be blocked).
         if policy.blocklist_enabled {
-            require!(!is_active(&ctx.accounts.source_block, ctx.program_id), SentinelError::SenderBlocked);
-            require!(!is_active(&ctx.accounts.dest_block, ctx.program_id), SentinelError::RecipientBlocked);
+            require!(
+                !is_active(&ctx.accounts.source_block, ctx.program_id),
+                SentinelError::SenderBlocked
+            );
+            require!(
+                !is_active(&ctx.accounts.dest_block, ctx.program_id),
+                SentinelError::RecipientBlocked
+            );
         }
 
         // Allowlist rule (recipient must be allowlisted).
         if policy.allowlist_enabled {
-            require!(is_active(&ctx.accounts.allow_entry, ctx.program_id), SentinelError::RecipientNotAllowlisted);
+            require!(
+                is_active(&ctx.accounts.allow_entry, ctx.program_id),
+                SentinelError::RecipientNotAllowlisted
+            );
         }
 
-        msg!("Sentinel: transfer allowed ({} units)", amount);
+        if is_confidential {
+            msg!("Sentinel: confidential transfer allowed (amount not visible to the hook)");
+        } else {
+            msg!("Sentinel: transfer allowed ({} units)", amount);
+        }
         Ok(())
     }
 
@@ -241,11 +290,16 @@ pub struct PolicyConfig {
     pub allowlist_enabled: bool,
     pub blocklist_enabled: bool,
     pub max_transfer_amount: u64,
+    /// Permit confidential transfers on a mint that also sets
+    /// `max_transfer_amount`. The limit cannot be enforced on an encrypted
+    /// amount, so the issuer opts in to that gap explicitly. Irrelevant when no
+    /// limit is set, because there is then nothing to enforce.
+    pub allow_confidential: bool,
     pub bump: u8,
 }
 
 impl PolicyConfig {
-    const LEN: usize = 8 + 32 + 32 + 1 + 1 + 8 + 1;
+    const LEN: usize = 8 + 32 + 32 + 1 + 1 + 8 + 1 + 1;
 }
 
 /// An allowlist entry: its existence means `wallet` may receive `mint`.
@@ -481,4 +535,7 @@ pub enum SentinelError {
     RecipientBlocked,
     #[msg("Only the policy authority may perform this action")]
     Unauthorized,
+    // Appended, so the existing variants keep their error codes.
+    #[msg("This mint sets a transfer limit, which cannot be enforced on a confidential transfer; set allow_confidential on the policy to permit them")]
+    ConfidentialAmountNotEnforceable,
 }

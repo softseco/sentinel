@@ -8,7 +8,7 @@ export type Sentinel = {
   "address": "4Lr94hphpGHq2VY6CRC5Yxq6k3gs9nSSzsh479hVU1Xw",
   "metadata": {
     "name": "sentinel",
-    "version": "1.0.0",
+    "version": "2.0.0",
     "spec": "0.1.0",
     "description": "Programmable compliance for Token-2022 tokenized assets, built on Transfer Hooks."
   },
@@ -317,6 +317,10 @@ export type Sentinel = {
         {
           "name": "maxTransferAmount",
           "type": "u64"
+        },
+        {
+          "name": "allowConfidential",
+          "type": "bool"
         }
       ]
     },
@@ -646,6 +650,10 @@ export type Sentinel = {
         {
           "name": "maxTransferAmount",
           "type": "u64"
+        },
+        {
+          "name": "allowConfidential",
+          "type": "bool"
         }
       ]
     }
@@ -716,6 +724,11 @@ export type Sentinel = {
       "code": 6004,
       "name": "unauthorized",
       "msg": "Only the policy authority may perform this action"
+    },
+    {
+      "code": 6005,
+      "name": "confidentialAmountNotEnforceable",
+      "msg": "This mint sets a transfer limit, which cannot be enforced on a confidential transfer; set allow_confidential on the policy to permit them"
     }
   ],
   "types": [
@@ -792,6 +805,16 @@ export type Sentinel = {
           {
             "name": "maxTransferAmount",
             "type": "u64"
+          },
+          {
+            "name": "allowConfidential",
+            "docs": [
+              "Permit confidential transfers on a mint that also sets",
+              "`max_transfer_amount`. The limit cannot be enforced on an encrypted",
+              "amount, so the issuer opts in to that gap explicitly. Irrelevant when no",
+              "limit is set, because there is then nothing to enforce."
+            ],
+            "type": "bool"
           },
           {
             "name": "bump",

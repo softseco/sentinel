@@ -10,7 +10,14 @@ an allowlist, a blocklist (sender *and* recipient), and a per-transfer limit —
 per-mint policy the issuer controls. Regulated and real-world-asset (RWA) tokens can enforce *who*
 may hold and move them, without giving up composability.
 
-> **Status: `v1.0.0` — stable API, self-audited, validated on a local validator (not independently audited).** Built by Softseco.
+**Confidential transfers.** Token-2022 hides the amount of a confidential transfer from the hook,
+which means an amount limit cannot be enforced on one — it is unenforceable, not satisfied. So a
+mint that sets `maxTransferAmount` refuses confidential transfers unless its policy also sets
+`allowConfidential`, which is the issuer accepting in the open that the limit does not reach them.
+The allowlist and blocklist work on addresses, which stay public, so they apply to confidential
+transfers exactly as they do to public ones.
+
+> **Status: `v2.0.0` — stable API, self-audited, validated on a local validator (not independently audited).** Built by Softseco.
 
 ## Why
 
@@ -21,7 +28,7 @@ own transfer-gating program. Set a policy once; Sentinel enforces it on every mo
 ## What's here
 
 - **On-chain program** (Rust / Anchor) — the transfer hook + policy, allowlist, blocklist, limit.
-  9 passing integration tests.
+  15 passing integration tests.
 - **TypeScript SDK** — [`@softseco/sentinel`](https://www.npmjs.com/package/@softseco/sentinel):
   create a compliant mint, manage the policy and entries, hook-aware transfers, and reads.
 - **Runnable demo** — [`sdk/examples/compliant-asset-demo.ts`](./sdk/examples/compliant-asset-demo.ts).
@@ -71,18 +78,25 @@ tests/               integration tests (anchor test)
 
 ## Status
 
-**v1.0.0** — program + SDK + demo, 11 integration tests, self-audited before release
-(see [CHANGELOG.md](./CHANGELOG.md) · [SECURITY.md](./SECURITY.md)). Pre-alpha maturity:
-validated on a local validator, not independently audited. See [PROJECT_PLAN.md](./PROJECT_PLAN.md).
+**v2.0.0** — program + SDK + demo, 15 integration tests, self-audited before release
+(see [CHANGELOG.md](./CHANGELOG.md) · [SECURITY.md](./SECURITY.md)). Breaking since 1.0.0:
+`PolicyConfig` gained `allow_confidential` and existing policy accounts must be recreated.
+Pre-alpha maturity: validated on a local validator, not independently audited. See
+[PROJECT_PLAN.md](./PROJECT_PLAN.md).
 
 ## Local development
 
 ```bash
-anchor build && anchor test     # program + integration tests
-cd sdk && npm install && npm run build
+anchor build -- --tools-version v1.57                                   # program
+anchor idl build -o sdk/src/idl/sentinel.json -t sdk/src/idl/sentinel.ts  # IDL
+anchor test --skip-build                                                # 15 integration tests
+cd sdk && npm install && npm run build                                  # SDK
 ```
 
-Requires the Anchor toolchain, Solana CLI, and Node ≥ 20.
+Requires the Anchor toolchain (0.31.0), Solana CLI, and Node ≥ 20. The `--tools-version` flag is
+needed because the default platform-tools build cannot parse Rust edition-2024 dependencies, and
+the IDL step is run separately because that flag is not valid there —
+see [CONTRIBUTING.md](./CONTRIBUTING.md).
 
 ## License
 
