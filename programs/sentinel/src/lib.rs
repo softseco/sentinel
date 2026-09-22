@@ -30,7 +30,7 @@ use spl_transfer_hook_interface::instruction::{ExecuteInstruction, TransferHookI
 /// literal quantity.
 pub const CONFIDENTIAL_TRANSFER_AMOUNT: u64 = u64::MAX;
 
-declare_id!("4Lr94hphpGHq2VY6CRC5Yxq6k3gs9nSSzsh479hVU1Xw");
+declare_id!("5fH1jj6XeZC96jPCxKiSb2onAXcs7f4rMeqMmSsP6puD");
 
 const META_LIST_SEED: &[u8] = b"extra-account-metas";
 const POLICY_SEED: &[u8] = b"policy";

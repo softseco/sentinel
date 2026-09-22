@@ -4,6 +4,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html). The on-chain program and the
 `@softseco/sentinel` SDK are versioned together.
 
+## [2.0.1] - 2026-09-22
+
+### Changed
+- **New program id: `5fH1jj6XeZC96jPCxKiSb2onAXcs7f4rMeqMmSsP6puD`.** The keypair behind `4Lr94hphpGHq2VY6CRC5Yxq6k3gs9nSSzsh479hVU1Xw` came from a local build, was never deployed
+  anywhere, and no longer exists, so the program was rebuilt under a fresh keypair. `declare_id!`,
+  `Anchor.toml` and the SDK's bundled IDL all carry the new id. Nothing on chain referenced the old one.
+
+### Added
+- **First deployment — Solana devnet.** The program is live at the id above, with the upgrade authority
+  held by Softseco. Program behaviour is unchanged from 2.0.0.
+
 ## [2.0.0] - 2026-09-20
 
 ### Fixed

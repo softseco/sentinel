@@ -6,7 +6,7 @@ resolution = true
 skip-lint = false
 
 [programs.localnet]
-sentinel = "4Lr94hphpGHq2VY6CRC5Yxq6k3gs9nSSzsh479hVU1Xw"
+sentinel = "5fH1jj6XeZC96jPCxKiSb2onAXcs7f4rMeqMmSsP6puD"
 
 [registry]
 url = "https://api.apr.dev"

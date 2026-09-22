@@ -5,7 +5,7 @@
  * IDL can be found at `target/idl/sentinel.json`.
  */
 export type Sentinel = {
-  "address": "4Lr94hphpGHq2VY6CRC5Yxq6k3gs9nSSzsh479hVU1Xw",
+  "address": "5fH1jj6XeZC96jPCxKiSb2onAXcs7f4rMeqMmSsP6puD",
   "metadata": {
     "name": "sentinel",
     "version": "2.0.0",
