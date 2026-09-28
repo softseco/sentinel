@@ -4,6 +4,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html). The on-chain program and the
 `@softseco/sentinel` SDK are versioned together.
 
+## [2.0.2] - 2026-09-28
+
+Documentation and packaging only. The program code is unchanged and was not redeployed: the devnet
+program at `5fH1jj6XeZC96jPCxKiSb2onAXcs7f4rMeqMmSsP6puD` is the 2.0.1 build.
+
+### Changed
+- The README and the SDK README (the npm page) describe the current state: stable API,
+  self-audited, deployed on devnet, not independently audited. Both still said "pre-alpha,
+  validated on a local validator" in places.
+- `PROJECT_PLAN.md`, an early internal planning note, is removed from the repository.
+- The IDL metadata and `Cargo.lock` carry the release version; they still said 2.0.0.
+
+### Added
+- npm package metadata: keywords, homepage, issue tracker and `engines` (Node ≥ 20).
+
 ## [2.0.1] - 2026-09-22
 
 ### Changed
@@ -105,6 +120,7 @@ Informational (no exploit): the transfer hook relies on Token-2022's determinist
 resolution for the allow/block entries; documented in-code. Not independently audited — review
 before production use.
 
+[2.0.2]: https://github.com/softseco/sentinel/releases/tag/v2.0.2
 [2.0.1]: https://github.com/softseco/sentinel/releases/tag/v2.0.1
 [2.0.0]: https://github.com/softseco/sentinel/releases/tag/v2.0.0
 [1.0.0]: https://github.com/softseco/sentinel/releases/tag/v1.0.0

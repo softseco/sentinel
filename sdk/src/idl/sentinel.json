@@ -2,7 +2,7 @@
   "address": "5fH1jj6XeZC96jPCxKiSb2onAXcs7f4rMeqMmSsP6puD",
   "metadata": {
     "name": "sentinel",
-    "version": "2.0.0",
+    "version": "2.0.2",
     "spec": "0.1.0",
     "description": "Programmable compliance for Token-2022 tokenized assets, built on Transfer Hooks."
   },

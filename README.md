@@ -17,7 +17,7 @@ mint that sets `maxTransferAmount` refuses confidential transfers unless its pol
 The allowlist and blocklist work on addresses, which stay public, so they apply to confidential
 transfers exactly as they do to public ones.
 
-> **Status: `v2.0.1` — stable API, self-audited, deployed on Solana devnet (not independently audited).** Built by Softseco.
+> **Status: `v2.0.2` — stable API, self-audited, deployed on Solana devnet (not independently audited).** Built by Softseco.
 >
 > **Devnet program:** [`5fH1jj6XeZC96jPCxKiSb2onAXcs7f4rMeqMmSsP6puD`](https://explorer.solana.com/address/5fH1jj6XeZC96jPCxKiSb2onAXcs7f4rMeqMmSsP6puD?cluster=devnet)
 
@@ -80,7 +80,7 @@ tests/               integration tests (anchor test)
 
 ## Status
 
-**v2.0.1** — program + SDK + demo, 15 integration tests, self-audited before release, deployed on
+**v2.0.2** — program + SDK + demo, 15 integration tests, self-audited before release, deployed on
 devnet (see [CHANGELOG.md](./CHANGELOG.md) · [SECURITY.md](./SECURITY.md)). Not independently
 audited. Breaking since 1.0.0: `PolicyConfig` gained `allow_confidential` and existing policy
 accounts must be recreated. A confidential transfer through a Sentinel mint, with the blocklist
