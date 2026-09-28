@@ -59,7 +59,7 @@ A compliant "ACME" security token, gated live:
 
 ```
 Terminal 1:  anchor localnet          # validator + deployed program
-Terminal 2:  cd sdk && npm run demo
+Terminal 2:  cd sdk && npm install && npm run demo
 ```
 
 ```
