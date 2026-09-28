@@ -81,6 +81,8 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html). The on-chain
 
 First stable release of Sentinel — programmable compliance for Token-2022 tokenized assets.
 
+The SDK at this version was not published to npm: `@softseco/sentinel` went from 0.1.0 to 2.0.0.
+
 ### Added
 - **Compliance program** (Anchor): per-mint `PolicyConfig` toggling an **allowlist**, a **blocklist**
   (sender + recipient), and a **per-transfer limit**, enforced on every transfer via the Token-2022
@@ -103,5 +105,6 @@ Informational (no exploit): the transfer hook relies on Token-2022's determinist
 resolution for the allow/block entries; documented in-code. Not independently audited — review
 before production use.
 
+[2.0.1]: https://github.com/softseco/sentinel/releases/tag/v2.0.1
 [2.0.0]: https://github.com/softseco/sentinel/releases/tag/v2.0.0
 [1.0.0]: https://github.com/softseco/sentinel/releases/tag/v1.0.0

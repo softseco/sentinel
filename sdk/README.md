@@ -4,8 +4,8 @@ TypeScript SDK for **Sentinel** — programmable compliance for Token-2022 token
 the Transfer Hook extension. Create a compliant mint, set a policy (allowlist, blocklist, transfer
 limit), manage entries, and move tokens through the hook — in a handful of async calls.
 
-> **Status: `v2.0.1` — pre-alpha, in active development.** Validated on a local validator, not
-> independently audited. Built by Softseco.
+> **Status: `v2.0.1`.** Stable API, self-audited, not independently audited. The program is deployed
+> on Solana devnet at `5fH1jj6XeZC96jPCxKiSb2onAXcs7f4rMeqMmSsP6puD`. Built by Softseco.
 
 ## Install
 

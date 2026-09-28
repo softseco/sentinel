@@ -1,12 +1,30 @@
 {
   "name": "@softseco/sentinel",
   "version": "2.0.1",
-  "description": "TypeScript SDK for Sentinel \u2014 programmable compliance for Token-2022 tokenized assets (Transfer Hooks).",
+  "description": "TypeScript SDK for Sentinel — programmable compliance for Token-2022 tokenized assets (Transfer Hooks).",
+  "keywords": [
+    "solana",
+    "token-2022",
+    "transfer-hook",
+    "compliance",
+    "allowlist",
+    "blocklist",
+    "rwa",
+    "tokenization",
+    "anchor"
+  ],
   "license": "Apache-2.0",
   "author": "Joachim Szamborski (Softseco)",
+  "homepage": "https://github.com/softseco/sentinel#readme",
+  "bugs": {
+    "url": "https://github.com/softseco/sentinel/issues"
+  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/softseco/sentinel.git"
+  },
+  "engines": {
+    "node": ">=20"
   },
   "type": "commonjs",
   "main": "./dist/index.js",

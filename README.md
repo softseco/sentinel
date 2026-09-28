@@ -80,11 +80,12 @@ tests/               integration tests (anchor test)
 
 ## Status
 
-**v2.0.1** — program + SDK + demo, 15 integration tests, self-audited before release, running on devnet
-(see [CHANGELOG.md](./CHANGELOG.md) · [SECURITY.md](./SECURITY.md)). Breaking since 1.0.0:
-`PolicyConfig` gained `allow_confidential` and existing policy accounts must be recreated.
-Pre-alpha maturity: validated on a local validator, not independently audited. See
-[PROJECT_PLAN.md](./PROJECT_PLAN.md).
+**v2.0.1** — program + SDK + demo, 15 integration tests, self-audited before release, deployed on
+devnet (see [CHANGELOG.md](./CHANGELOG.md) · [SECURITY.md](./SECURITY.md)). Not independently
+audited. Breaking since 1.0.0: `PolicyConfig` gained `allow_confidential` and existing policy
+accounts must be recreated. A confidential transfer through a Sentinel mint, with the blocklist
+enforced on the same transfer, runs end-to-end on devnet in
+[paper-devnet](https://github.com/softseco/paper-devnet).
 
 ## Local development
 
