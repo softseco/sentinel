@@ -6,16 +6,71 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html). The on-chain
 
 ## [Unreleased]
 
+_Nothing yet._
+
+## [2.1.0] - 2026-10-12
+
+Not deployed yet: the devnet program at `5fH1jj6XeZC96jPCxKiSb2onAXcs7f4rMeqMmSsP6puD` is the 2.0.1
+build until it is upgraded. No breaking changes: `PolicyConfig`, the entry accounts, every existing
+instruction and every existing error code are unchanged.
+
+### Fixed
+- **A blocklisted wallet could move tokens as a delegate.** The blocklist checked the owners of
+  the source and destination accounts, not the authority signing the transfer. A blocked wallet
+  that a clean holder had approved as delegate (or a blocked permanent delegate) could send that
+  holder's tokens to any clean wallet. The hook now also refuses when the transfer authority is
+  blocklisted (`AuthorityBlocked`, 6006). Found in our own review, on devnet, before any mainnet
+  use.
+
 ### Added
+- `update_extra_account_meta_list`: rewrites a mint's `ExtraAccountMetaList` to the current list
+  and grows the account if needed (the policy authority signs and pays the extra rent). The list
+  gains a fifth entry, the transfer authority's blocklist entry.
+- Two-step handover of the policy authority: `propose_authority`, `accept_authority` (signed by
+  the new authority) and `cancel_authority_transfer`. The proposal lives in its own PDA
+  (`["pending-authority", mint]`), so nothing changes until the new authority signs, and a
+  mistyped address cannot lock a policy. The authority can be a multisig vault such as Squads.
+- Events for every policy change and every refusal: `PolicyInitialized`, `PolicyUpdated`,
+  `ListEntryAdded`, `ListEntryRemoved`, `MetaListUpdated`, `AuthorityTransferProposed`,
+  `AuthorityTransferCancelled`, `AuthorityTransferred`, and `TransferRefused` (mint, both owners,
+  the transfer authority, whether the transfer was confidential, and the error code). A refusal
+  fails the transaction, but its logs, and the event in them, stay readable.
+- Errors `AuthorityBlocked` (6006) and `InvalidAuthority` (6007), appended.
+- SDK: instruction builders for every authority-gated instruction with the authority as a
+  parameter (`updatePolicyInstruction`, `listInstruction`, `proposeAuthorityInstruction`,
+  `acceptAuthorityInstruction`, `cancelAuthorityTransferInstruction`,
+  `updateExtraAccountMetaListInstruction`), for authorities that sign elsewhere, such as a
+  multisig. `proposeAuthority`, `acceptAuthority`, `cancelAuthorityTransfer`,
+  `getPendingAuthority` and `updateExtraAccountMetaList`. Batch list updates
+  (`addToAllowlistBatch`, `addToBlocklistBatch` and the `remove` pair), eight changes per
+  transaction. `parseEvents` and `getEvents` decode the events above, including from a failed
+  transaction's logs. `pendingAuthorityPda`.
 - Integration tests with real Token-2022 confidential transfers (`tests/confidential.ts`). The
   sender's proofs go through the ZK ElGamal Proof Program and Token-2022 calls Sentinel as the
   hook, so the rules are checked on the path a real confidential transfer takes: the limit refuses
   confidential transfers until the issuer sets `allow_confidential`, the blocklist stops a blocked
   sender or recipient, the allowlist applies, and the mint's auditor can still read the amounts
   the hook could not see. Until now the confidential branch was tested by calling the hook
-  directly with `u64::MAX`. The suite is 26 tests.
+  directly with `u64::MAX`.
+- Tests for delegates, the meta-list update, events and the authority handover
+  (`tests/admin.ts`), and for the SDK (`tests/sdk.ts`). The suite is 44 tests.
+- `scripts/upgrade-check.sh` and `tests-upgrade/`: build 2.0.2 and this version, set a mint up
+  under 2.0.2 on a local validator, upgrade in place, and check that the mint keeps working and
+  that `update_extra_account_meta_list` turns the delegate check on. CI runs it.
+- `docs/threat-model.md`: what Sentinel protects, who is trusted, the invariants, known limits
+  and the findings of our own review.
 - CI builds the program and runs the whole suite on a local validator, checks that the committed
   IDL matches the program, and runs `cargo audit`.
+
+### Upgrading from 2.0.x
+- Upgrade the program in place; existing policies, entries and meta lists keep working.
+- For each existing mint, the policy authority calls `update_extra_account_meta_list` once
+  (SDK: `client.updateExtraAccountMetaList(mint)`). Until then the hook does not receive the
+  transfer authority's entry and the delegate check is skipped for that mint. Mints whose meta
+  list is created by 2.1 have it from the start.
+- Callers that build transfer instructions by hand must resolve the meta list's accounts as
+  usual (`@solana/spl-token`'s `createTransferCheckedWithTransferHookInstruction` and
+  `@softseco/confidential-transfers` do); there is no fixed account list to update.
 
 ## [2.0.2] - 2026-09-28
 
@@ -133,7 +188,8 @@ Informational (no exploit): the transfer hook relies on Token-2022's determinist
 resolution for the allow/block entries; documented in-code. Not independently audited — review
 before production use.
 
-[Unreleased]: https://github.com/softseco/sentinel/compare/v2.0.2...HEAD
+[Unreleased]: https://github.com/softseco/sentinel/compare/v2.1.0...HEAD
+[2.1.0]: https://github.com/softseco/sentinel/releases/tag/v2.1.0
 [2.0.2]: https://github.com/softseco/sentinel/releases/tag/v2.0.2
 [2.0.1]: https://github.com/softseco/sentinel/releases/tag/v2.0.1
 [2.0.0]: https://github.com/softseco/sentinel/releases/tag/v2.0.0

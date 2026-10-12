@@ -9,5 +9,5 @@
     "resolveJsonModule": true,
     "skipLibCheck": true
   },
-  "include": ["tests", "migrations"]
+  "include": ["tests", "tests-upgrade", "migrations"]
 }

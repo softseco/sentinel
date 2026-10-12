@@ -80,6 +80,35 @@ jobs:
           solana-keygen new --no-bip39-passphrase -s -o "$HOME/.config/solana/id.json"
           anchor test --skip-build
 
+  upgrade:
+    name: upgrade path from 2.0.2 (local validator)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0   # the script builds the old release from its tag
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/cache@v6
+        with:
+          path: |
+            ~/.local/share/solana
+            ~/.cache/solana
+          key: solana-${{ env.SOLANA_VERSION }}-anchor-${{ env.ANCHOR_VERSION }}
+      - name: Install the Solana toolchain
+        run: |
+          if [ ! -x "$HOME/.local/share/solana/install/active_release/bin/solana" ]; then
+            sh -c "$(curl -sSfL https://release.anza.xyz/v${SOLANA_VERSION}/install)"
+          fi
+          echo "$HOME/.local/share/solana/install/active_release/bin" >> "$GITHUB_PATH"
+      - run: npm ci
+      - run: solana-keygen new --no-bip39-passphrase -s -o "$HOME/.config/solana/id.json"
+      - run: bash scripts/upgrade-check.sh v2.0.2
+
   sdk:
     name: sdk (typecheck, build)
     runs-on: ubuntu-latest

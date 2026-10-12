@@ -4,7 +4,7 @@ TypeScript SDK for **Sentinel** — programmable compliance for Token-2022 token
 the Transfer Hook extension. Create a compliant mint, set a policy (allowlist, blocklist, transfer
 limit), manage entries, and move tokens through the hook — in a handful of async calls.
 
-> **Status: `v2.0.2`.** Stable API, self-audited, not independently audited. The program is deployed
+> **Status: `v2.1.0`.** Stable API, self-audited, not independently audited. The program is deployed
 > on Solana devnet at `5fH1jj6XeZC96jPCxKiSb2onAXcs7f4rMeqMmSsP6puD`. Built by Softseco.
 
 ## Install
@@ -63,7 +63,41 @@ await client.isBlocklisted(mint.publicKey, someWallet);
 - `addToBlocklist(mint, wallet)` / `removeFromBlocklist(mint, wallet)`
 - `transfer({ mint, amount, decimals, destinationOwner?, destination?, owner?, source? })`
 - `getPolicy(mint)`, `isAllowlisted(mint, wallet)`, `isBlocklisted(mint, wallet)`
-- PDA helpers: `policy`, `metaList`, `allowEntry`, `blockEntry`
+- PDA helpers: `policy`, `metaList`, `allowEntry`, `blockEntry`, `pendingAuthority`
+
+Since 2.1:
+
+- Batch list updates, eight per transaction: `addToAllowlistBatch(mint, wallets)`,
+  `removeFromAllowlistBatch`, `addToBlocklistBatch`, `removeFromBlocklistBatch`
+- Authority handover: `proposeAuthority(mint, newAuthority)`, `acceptAuthority(mint, newAuthoritySigner)`,
+  `cancelAuthorityTransfer(mint)`, `getPendingAuthority(mint)`
+- `updateExtraAccountMetaList(mint)`: run once for a mint set up before 2.1, so the blocklist also
+  covers delegates
+- Events: `getEvents(signature)` and `parseEvents(logs)` decode `transferRefused`, `policyUpdated`,
+  `listEntryAdded`, `listEntryRemoved`, `authorityTransferred` and the rest, including from the logs
+  of a failed transfer
+- Instruction builders, with the authority as a parameter: `updatePolicyInstruction`,
+  `listInstruction`, `proposeAuthorityInstruction`, `acceptAuthorityInstruction`,
+  `cancelAuthorityTransferInstruction`, `updateExtraAccountMetaListInstruction`
+
+## Policy authority held by a multisig
+
+The `SentinelClient` methods sign with the provider wallet. When the policy authority is a
+multisig, build the instruction with the multisig's address as `authority` and propose it there:
+
+```ts
+// 1. Today's authority proposes the multisig vault; nothing changes yet.
+await client.proposeAuthority(mint, vault);
+
+// 2. The multisig accepts: put this instruction in a multisig transaction and execute it.
+const accept = await client.acceptAuthorityInstruction(mint, vault, currentAuthority);
+
+// 3. From then on, every change is a multisig transaction, for example:
+const block = await client.listInstruction({ mint, wallet, list: "block", action: "add", authority: vault });
+```
+
+The handover takes two steps so that a mistyped address cannot lock the policy: until the new
+authority signs `accept`, the old one stays in charge and can `cancelAuthorityTransfer`.
 
 ## Confidential transfers
 
@@ -78,7 +112,9 @@ which is the issuer accepting, explicitly, that the limit does not reach those t
 `maxTransferAmount: 0` there is no limit to be unenforceable, so the flag is irrelevant.
 
 The allowlist and blocklist work on **addresses**, which stay public, so they apply to confidential
-transfers exactly as they do to public ones. `getPolicy(mint)` returns `allowConfidential` alongside
+transfers exactly as they do to public ones. To watch the amounts of confidential transfers, give
+the mint an auditor key: the auditor decrypts every amount off-chain (see
+`@softseco/confidential-transfers`). `getPolicy(mint)` returns `allowConfidential` alongside
 the other fields.
 
 ## License

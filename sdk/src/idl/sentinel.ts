@@ -8,11 +8,98 @@ export type Sentinel = {
   "address": "5fH1jj6XeZC96jPCxKiSb2onAXcs7f4rMeqMmSsP6puD",
   "metadata": {
     "name": "sentinel",
-    "version": "2.0.2",
+    "version": "2.1.0",
     "spec": "0.1.0",
     "description": "Programmable compliance for Token-2022 tokenized assets, built on Transfer Hooks."
   },
   "instructions": [
+    {
+      "name": "acceptAuthority",
+      "docs": [
+        "Complete the handover: the proposed authority signs and becomes the policy authority."
+      ],
+      "discriminator": [
+        107,
+        86,
+        198,
+        91,
+        33,
+        12,
+        107,
+        160
+      ],
+      "accounts": [
+        {
+          "name": "newAuthority",
+          "signer": true
+        },
+        {
+          "name": "previousAuthority",
+          "writable": true
+        },
+        {
+          "name": "mint"
+        },
+        {
+          "name": "policyConfig",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  111,
+                  108,
+                  105,
+                  99,
+                  121
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "pendingAuthority",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  101,
+                  110,
+                  100,
+                  105,
+                  110,
+                  103,
+                  45,
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              }
+            ]
+          }
+        }
+      ],
+      "args": []
+    },
     {
       "name": "addToAllowlist",
       "docs": [
@@ -184,6 +271,92 @@ export type Sentinel = {
       "args": []
     },
     {
+      "name": "cancelAuthorityTransfer",
+      "docs": [
+        "Withdraw a pending proposal. Only the current authority may call this."
+      ],
+      "discriminator": [
+        94,
+        131,
+        125,
+        184,
+        183,
+        24,
+        125,
+        229
+      ],
+      "accounts": [
+        {
+          "name": "authority",
+          "writable": true,
+          "signer": true,
+          "relations": [
+            "policyConfig"
+          ]
+        },
+        {
+          "name": "mint"
+        },
+        {
+          "name": "policyConfig",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  111,
+                  108,
+                  105,
+                  99,
+                  121
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "pendingAuthority",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  101,
+                  110,
+                  100,
+                  105,
+                  110,
+                  103,
+                  45,
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              }
+            ]
+          }
+        }
+      ],
+      "args": []
+    },
+    {
       "name": "initializeExtraAccountMetaList",
       "docs": [
         "Create and initialize the `ExtraAccountMetaList` PDA for `mint`, declaring",
@@ -321,6 +494,102 @@ export type Sentinel = {
         {
           "name": "allowConfidential",
           "type": "bool"
+        }
+      ]
+    },
+    {
+      "name": "proposeAuthority",
+      "docs": [
+        "Start handing the policy to `new_authority` (for example a multisig vault). Nothing",
+        "changes until `new_authority` accepts, so a mistyped address cannot lock the policy."
+      ],
+      "discriminator": [
+        20,
+        148,
+        236,
+        198,
+        76,
+        119,
+        99,
+        142
+      ],
+      "accounts": [
+        {
+          "name": "authority",
+          "writable": true,
+          "signer": true,
+          "relations": [
+            "policyConfig"
+          ]
+        },
+        {
+          "name": "mint"
+        },
+        {
+          "name": "policyConfig",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  111,
+                  108,
+                  105,
+                  99,
+                  121
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "pendingAuthority",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  101,
+                  110,
+                  100,
+                  105,
+                  110,
+                  103,
+                  45,
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "systemProgram",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "newAuthority",
+          "type": "pubkey"
         }
       ]
     },
@@ -489,7 +758,10 @@ export type Sentinel = {
     {
       "name": "transferHook",
       "docs": [
-        "Invoked by Token-2022 on every transfer. Enforces the mint's policy."
+        "Invoked by Token-2022 on every transfer. Enforces the mint's policy.",
+        "",
+        "A refusal emits `TransferRefused` before returning the error, so indexers can read the",
+        "reason from the failed transaction's logs."
       ],
       "discriminator": [
         220,
@@ -589,6 +861,101 @@ export type Sentinel = {
       ]
     },
     {
+      "name": "updateExtraAccountMetaList",
+      "docs": [
+        "Rewrite a mint's `ExtraAccountMetaList` to the current list, growing the account if",
+        "needed. Mints initialized before 2.1 run this once so the hook also receives the transfer",
+        "authority's blocklist entry. The list's content is fixed by the program; only the policy",
+        "authority may trigger the rewrite, and it pays for any extra rent."
+      ],
+      "discriminator": [
+        44,
+        125,
+        141,
+        226,
+        97,
+        179,
+        166,
+        96
+      ],
+      "accounts": [
+        {
+          "name": "authority",
+          "writable": true,
+          "signer": true,
+          "relations": [
+            "policyConfig"
+          ]
+        },
+        {
+          "name": "mint"
+        },
+        {
+          "name": "policyConfig",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  111,
+                  108,
+                  105,
+                  99,
+                  121
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "extraAccountMetaList",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  101,
+                  120,
+                  116,
+                  114,
+                  97,
+                  45,
+                  97,
+                  99,
+                  99,
+                  111,
+                  117,
+                  110,
+                  116,
+                  45,
+                  109,
+                  101,
+                  116,
+                  97,
+                  115
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "systemProgram",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": []
+    },
+    {
       "name": "updatePolicy",
       "docs": [
         "Update the mint's policy. Only the policy authority may call this."
@@ -686,6 +1053,19 @@ export type Sentinel = {
       ]
     },
     {
+      "name": "pendingAuthority",
+      "discriminator": [
+        108,
+        91,
+        208,
+        174,
+        216,
+        189,
+        207,
+        93
+      ]
+    },
+    {
       "name": "policyConfig",
       "discriminator": [
         219,
@@ -696,6 +1076,125 @@ export type Sentinel = {
         51,
         148,
         146
+      ]
+    }
+  ],
+  "events": [
+    {
+      "name": "authorityTransferCancelled",
+      "discriminator": [
+        31,
+        228,
+        187,
+        148,
+        20,
+        99,
+        237,
+        48
+      ]
+    },
+    {
+      "name": "authorityTransferProposed",
+      "discriminator": [
+        103,
+        244,
+        27,
+        116,
+        177,
+        4,
+        100,
+        119
+      ]
+    },
+    {
+      "name": "authorityTransferred",
+      "discriminator": [
+        245,
+        109,
+        179,
+        54,
+        135,
+        92,
+        22,
+        64
+      ]
+    },
+    {
+      "name": "listEntryAdded",
+      "discriminator": [
+        254,
+        152,
+        108,
+        37,
+        231,
+        44,
+        230,
+        119
+      ]
+    },
+    {
+      "name": "listEntryRemoved",
+      "discriminator": [
+        157,
+        60,
+        145,
+        12,
+        47,
+        48,
+        254,
+        47
+      ]
+    },
+    {
+      "name": "metaListUpdated",
+      "discriminator": [
+        170,
+        131,
+        210,
+        101,
+        188,
+        39,
+        126,
+        26
+      ]
+    },
+    {
+      "name": "policyInitialized",
+      "discriminator": [
+        102,
+        184,
+        59,
+        178,
+        235,
+        69,
+        251,
+        181
+      ]
+    },
+    {
+      "name": "policyUpdated",
+      "discriminator": [
+        225,
+        112,
+        112,
+        67,
+        95,
+        236,
+        245,
+        161
+      ]
+    },
+    {
+      "name": "transferRefused",
+      "discriminator": [
+        28,
+        112,
+        75,
+        245,
+        67,
+        66,
+        237,
+        197
       ]
     }
   ],
@@ -729,6 +1228,16 @@ export type Sentinel = {
       "code": 6005,
       "name": "confidentialAmountNotEnforceable",
       "msg": "This mint sets a transfer limit, which cannot be enforced on a confidential transfer; set allow_confidential on the policy to permit them"
+    },
+    {
+      "code": 6006,
+      "name": "authorityBlocked",
+      "msg": "The transfer authority (a delegate of the source account) is blocklisted for this mint"
+    },
+    {
+      "code": 6007,
+      "name": "invalidAuthority",
+      "msg": "The new authority must be a real address and differ from the current one"
     }
   ],
   "types": [
@@ -756,6 +1265,66 @@ export type Sentinel = {
       }
     },
     {
+      "name": "authorityTransferCancelled",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "authority",
+            "type": "pubkey"
+          },
+          {
+            "name": "newAuthority",
+            "type": "pubkey"
+          }
+        ]
+      }
+    },
+    {
+      "name": "authorityTransferProposed",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "authority",
+            "type": "pubkey"
+          },
+          {
+            "name": "newAuthority",
+            "type": "pubkey"
+          }
+        ]
+      }
+    },
+    {
+      "name": "authorityTransferred",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "previousAuthority",
+            "type": "pubkey"
+          },
+          {
+            "name": "newAuthority",
+            "type": "pubkey"
+          }
+        ]
+      }
+    },
+    {
       "name": "blockEntry",
       "docs": [
         "A blocklist entry: its existence means `wallet` may neither send nor receive `mint`."
@@ -769,6 +1338,110 @@ export type Sentinel = {
           },
           {
             "name": "wallet",
+            "type": "pubkey"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "listEntryAdded",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "wallet",
+            "type": "pubkey"
+          },
+          {
+            "name": "list",
+            "type": {
+              "defined": {
+                "name": "listKind"
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "listEntryRemoved",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "wallet",
+            "type": "pubkey"
+          },
+          {
+            "name": "list",
+            "type": {
+              "defined": {
+                "name": "listKind"
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "listKind",
+      "docs": [
+        "Which list an entry belongs to."
+      ],
+      "type": {
+        "kind": "enum",
+        "variants": [
+          {
+            "name": "allow"
+          },
+          {
+            "name": "block"
+          }
+        ]
+      }
+    },
+    {
+      "name": "metaListUpdated",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "entries",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "pendingAuthority",
+      "docs": [
+        "A proposed handover of a mint's policy authority, waiting for `new_authority` to accept."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "newAuthority",
             "type": "pubkey"
           },
           {
@@ -819,6 +1492,106 @@ export type Sentinel = {
           {
             "name": "bump",
             "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "policyInitialized",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "authority",
+            "type": "pubkey"
+          },
+          {
+            "name": "allowlistEnabled",
+            "type": "bool"
+          },
+          {
+            "name": "blocklistEnabled",
+            "type": "bool"
+          },
+          {
+            "name": "maxTransferAmount",
+            "type": "u64"
+          },
+          {
+            "name": "allowConfidential",
+            "type": "bool"
+          }
+        ]
+      }
+    },
+    {
+      "name": "policyUpdated",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "authority",
+            "type": "pubkey"
+          },
+          {
+            "name": "allowlistEnabled",
+            "type": "bool"
+          },
+          {
+            "name": "blocklistEnabled",
+            "type": "bool"
+          },
+          {
+            "name": "maxTransferAmount",
+            "type": "u64"
+          },
+          {
+            "name": "allowConfidential",
+            "type": "bool"
+          }
+        ]
+      }
+    },
+    {
+      "name": "transferRefused",
+      "docs": [
+        "Emitted by the hook just before it refuses a transfer. The transaction fails, but its logs",
+        "(and this event) stay readable. `error_code` is the `SentinelError` code, e.g. 6003."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "sourceOwner",
+            "type": "pubkey"
+          },
+          {
+            "name": "destinationOwner",
+            "type": "pubkey"
+          },
+          {
+            "name": "transferAuthority",
+            "type": "pubkey"
+          },
+          {
+            "name": "confidential",
+            "type": "bool"
+          },
+          {
+            "name": "errorCode",
+            "type": "u32"
           }
         ]
       }

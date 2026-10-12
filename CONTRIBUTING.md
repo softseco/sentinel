@@ -54,7 +54,7 @@ the program.
 ## Tests
 
 ```bash
-anchor test --skip-build   # 26 integration tests against a local validator
+anchor test --skip-build   # 44 integration tests against a local validator
 ```
 
 `anchor test` deploys `target/deploy/sentinel.so` to a fresh local validator, so run a successful
@@ -65,6 +65,10 @@ toolchain.
 Agave 4.x first in `PATH` (2.x and 3.x reject today's ZK proofs), and the validator that
 `anchor test` starts loads a newer Token-2022 from `tests/fixtures/`, which `Anchor.toml` sets up.
 See [`tests/fixtures/README.md`](./tests/fixtures/README.md).
+
+`bash scripts/upgrade-check.sh` checks the upgrade path from the last release before 2.1 (2.0.2):
+it builds both versions, sets a mint up under the old one, upgrades in place on a local validator
+and runs `tests-upgrade/`.
 
 CI runs the same build and test suite on every push and pull request, and fails if the committed IDL
 in `sdk/src/idl/` no longer matches what `anchor idl build` produces from the program. It also runs

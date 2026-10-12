@@ -5,6 +5,7 @@ export const META_LIST_SEED = Buffer.from("extra-account-metas");
 export const POLICY_SEED = Buffer.from("policy");
 export const ALLOW_SEED = Buffer.from("allow");
 export const BLOCK_SEED = Buffer.from("block");
+export const PENDING_AUTHORITY_SEED = Buffer.from("pending-authority");
 
 /** PDA that stores a mint's ExtraAccountMetaList (`["extra-account-metas", mint]`). */
 export const metaListPda = (mint: PublicKey, programId: PublicKey): PublicKey =>
@@ -21,3 +22,7 @@ export const allowEntryPda = (mint: PublicKey, wallet: PublicKey, programId: Pub
 /** A wallet's blocklist entry PDA for a mint (`["block", mint, wallet]`). */
 export const blockEntryPda = (mint: PublicKey, wallet: PublicKey, programId: PublicKey): PublicKey =>
   PublicKey.findProgramAddressSync([BLOCK_SEED, mint.toBuffer(), wallet.toBuffer()], programId)[0];
+
+/** A mint's pending authority handover (`["pending-authority", mint]`), present between propose and accept. */
+export const pendingAuthorityPda = (mint: PublicKey, programId: PublicKey): PublicKey =>
+  PublicKey.findProgramAddressSync([PENDING_AUTHORITY_SEED, mint.toBuffer()], programId)[0];

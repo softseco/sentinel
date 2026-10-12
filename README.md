@@ -7,8 +7,8 @@
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](./LICENSE)
 
 Sentinel attaches compliance rules to a Token-2022 mint so **every transfer is checked on-chain**:
-an allowlist, a blocklist (sender *and* recipient), and a per-transfer limit — all toggled by a
-per-mint policy the issuer controls. Regulated and real-world-asset (RWA) tokens can enforce *who*
+an allowlist, a blocklist (sender, recipient, and a delegate moving someone else's tokens), and a
+per-transfer limit — all toggled by a per-mint policy the issuer controls. Regulated and real-world-asset (RWA) tokens can enforce *who*
 may hold and move them, without giving up composability.
 
 **Confidential transfers.** Token-2022 hides the amount of a confidential transfer from the hook,
@@ -30,9 +30,13 @@ own transfer-gating program. Set a policy once; Sentinel enforces it on every mo
 
 ## What's here
 
-- **On-chain program** (Rust / Anchor) — the transfer hook + policy, allowlist, blocklist, limit.
-  26 integration tests on a local validator, 11 of them with real Token-2022 confidential
-  transfers, where Token-2022 itself calls the hook. CI runs all of them on every push.
+- **On-chain program** (Rust / Anchor) — the transfer hook + policy, allowlist, blocklist, limit;
+  a two-step handover of the policy authority (to a multisig, for example); an event for every
+  policy change and every refused transfer. 44 integration tests on a local validator, 11 of them
+  with real Token-2022 confidential transfers, where Token-2022 itself calls the hook. CI runs all
+  of them on every push.
+- **Threat model** — [`docs/threat-model.md`](./docs/threat-model.md): what Sentinel protects, who
+  is trusted, the invariants it keeps, and its known limits.
 - **TypeScript SDK** — [`@softseco/sentinel`](https://www.npmjs.com/package/@softseco/sentinel):
   create a compliant mint, manage the policy and entries, hook-aware transfers, and reads.
 - **Runnable demo** — [`sdk/examples/compliant-asset-demo.ts`](./sdk/examples/compliant-asset-demo.ts).
@@ -82,9 +86,11 @@ tests/               integration tests (anchor test)
 
 ## Status
 
-**v2.0.2** — program + SDK + demo, 26 integration tests, self-audited before release, deployed on
-devnet (see [CHANGELOG.md](./CHANGELOG.md) · [SECURITY.md](./SECURITY.md)). Not independently
-audited. Breaking since 1.0.0: `PolicyConfig` gained `allow_confidential` and existing policy
+**v2.1.0** — program + SDK + demo, 44 integration tests, self-audited before release (see
+[CHANGELOG.md](./CHANGELOG.md) · [SECURITY.md](./SECURITY.md) ·
+[threat model](./docs/threat-model.md)). Not independently audited. The devnet program runs the
+2.0.1 build until it is upgraded to 2.1.0; 2.1 adds to it without breaking anything, and existing
+mints call `update_extra_account_meta_list` once to get the delegate check. Breaking since 1.0.0: `PolicyConfig` gained `allow_confidential` and existing policy
 accounts must be recreated. A confidential transfer through a Sentinel mint, with the blocklist
 enforced on the same transfer, runs end-to-end on devnet in
 [paper-devnet](https://github.com/softseco/paper-devnet).
@@ -94,7 +100,7 @@ enforced on the same transfer, runs end-to-end on devnet in
 ```bash
 anchor build -- --tools-version v1.57                                   # program
 anchor idl build -o sdk/src/idl/sentinel.json -t sdk/src/idl/sentinel.ts  # IDL
-anchor test --skip-build                                                # 26 integration tests
+anchor test --skip-build                                                # 44 integration tests
 cd sdk && npm install && npm run build                                  # SDK
 ```
 
