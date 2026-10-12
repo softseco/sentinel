@@ -10,9 +10,10 @@ _Nothing yet._
 
 ## [2.1.0] - 2026-10-12
 
-Not deployed yet: the devnet program at `5fH1jj6XeZC96jPCxKiSb2onAXcs7f4rMeqMmSsP6puD` is the 2.0.1
-build until it is upgraded. No breaking changes: `PolicyConfig`, the entry accounts, every existing
-instruction and every existing error code are unchanged.
+Deployed on devnet on 12 October 2026: the program at `5fH1jj6XeZC96jPCxKiSb2onAXcs7f4rMeqMmSsP6puD`
+was upgraded in place, and the meta list of the PAPER showcase mint was updated. No breaking
+changes: `PolicyConfig`, the entry accounts, every existing instruction and every existing error
+code are unchanged.
 
 ### Fixed
 - **A blocklisted wallet could move tokens as a delegate.** The blocklist checked the owners of

@@ -88,9 +88,9 @@ tests/               integration tests (anchor test)
 
 **v2.1.0** — program + SDK + demo, 44 integration tests, self-audited before release (see
 [CHANGELOG.md](./CHANGELOG.md) · [SECURITY.md](./SECURITY.md) ·
-[threat model](./docs/threat-model.md)). Not independently audited. The devnet program runs the
-2.0.1 build until it is upgraded to 2.1.0; 2.1 adds to it without breaking anything, and existing
-mints call `update_extra_account_meta_list` once to get the delegate check. Breaking since 1.0.0: `PolicyConfig` gained `allow_confidential` and existing policy
+[threat model](./docs/threat-model.md)). Not independently audited. The devnet program runs
+2.1.0 since 12 October 2026; mints set up before 2.1 call `update_extra_account_meta_list` once to
+get the delegate check. Breaking since 1.0.0: `PolicyConfig` gained `allow_confidential` and existing policy
 accounts must be recreated. A confidential transfer through a Sentinel mint, with the blocklist
 enforced on the same transfer, runs end-to-end on devnet in
 [paper-devnet](https://github.com/softseco/paper-devnet).
