@@ -6,34 +6,79 @@ on:
     branches: [ main ]
   pull_request:
 
+env:
+  SOLANA_VERSION: "4.2.2"
+  ANCHOR_VERSION: "0.31.1"
+
 jobs:
   program:
-    name: program (fmt, clippy, unit)
+    name: program (fmt, clippy)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --all --check
       - run: cargo clippy -p sentinel --all-targets -- -D warnings
-      # `anchor build` / `anchor test` need the Solana SBF toolchain and a local
-      # validator; they are run locally. See CONTRIBUTING.md.
 
-  tests:
-    name: tests (typecheck)
+  audit:
+    name: cargo audit
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: taiki-e/install-action@v2
         with:
-          node-version: "20"
+          tool: cargo-audit
+      # Fails on a known vulnerability in Cargo.lock. Warnings (unmaintained or unsound crates
+      # deep in the Solana dependency tree) are reported but do not fail the job.
+      - run: cargo audit
+
+  integration:
+    name: integration (build, IDL check, tests on a local validator)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
           cache: npm
-      - run: npm ci
-      # Compiles tests/ against the committed IDL. Running them needs a local
-      # validator and the built program, so `anchor test` stays local.
-      - run: npx tsc --noEmit -p tsconfig.json
+      - uses: dtolnay/rust-toolchain@stable
+      # `anchor idl build` calls `cargo +nightly`; stable stays the default.
+      - run: rustup toolchain install nightly --profile minimal
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/cache@v6
+        with:
+          path: |
+            ~/.local/share/solana
+            ~/.cache/solana
+          key: solana-${{ env.SOLANA_VERSION }}-anchor-${{ env.ANCHOR_VERSION }}
+      - name: Install the Solana toolchain and Anchor
+        run: |
+          if [ ! -x "$HOME/.local/share/solana/install/active_release/bin/solana" ]; then
+            sh -c "$(curl -sSfL https://release.anza.xyz/v${SOLANA_VERSION}/install)"
+          fi
+          echo "$HOME/.local/share/solana/install/active_release/bin" >> "$GITHUB_PATH"
+          mkdir -p "$HOME/.local/bin"
+          curl -sSfL -o "$HOME/.local/bin/anchor" \
+            "https://github.com/solana-foundation/anchor/releases/download/v${ANCHOR_VERSION}/anchor-${ANCHOR_VERSION}-x86_64-unknown-linux-gnu"
+          chmod +x "$HOME/.local/bin/anchor"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - run: solana --version && anchor --version
+      - name: Build the program
+        run: anchor build --no-idl
+      - name: Check that the committed IDL matches the program
+        run: |
+          anchor idl build -o target/idl/sentinel.json -t target/types/sentinel.ts
+          git diff --no-index --exit-code sdk/src/idl/sentinel.json target/idl/sentinel.json
+          git diff --no-index --exit-code sdk/src/idl/sentinel.ts target/types/sentinel.ts
+      - name: Test on a local validator
+        run: |
+          npm ci
+          # `anchor test` needs a provider wallet; the local validator funds it.
+          solana-keygen new --no-bip39-passphrase -s -o "$HOME/.config/solana/id.json"
+          anchor test --skip-build
 
   sdk:
     name: sdk (typecheck, build)
@@ -42,10 +87,10 @@ jobs:
       run:
         working-directory: sdk
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
-          node-version: "20"
+          node-version: "22"
       - run: npm install
       - run: npm run typecheck
       - run: npm run build

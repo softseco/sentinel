@@ -27,7 +27,9 @@ cargo clippy -p sentinel --all-targets -- -D warnings
 Cargo 1.84, which cannot parse `edition2024` manifests, so any dependency that has moved to
 edition 2024 fails to build. Two things follow:
 
-- Build with **platform-tools v1.57**: `anchor build -- --tools-version v1.57`.
+- Build with **platform-tools v1.57**: `anchor build -- --tools-version v1.57`. Solana CLI 4.2.2
+  ships platform-tools v1.54 as its default, which is also new enough, so a plain `anchor build`
+  works there (CI uses it).
 - `Cargo.lock` pins **`blake3 = 1.5.5`**. Later blake3 pulls `cpufeatures 0.3.x`, which is
   edition 2024. Do not bump it without also confirming the toolchain version above.
 
@@ -57,6 +59,10 @@ anchor test --skip-build   # 15 integration tests against a local validator
 `anchor test` deploys `target/deploy/sentinel.so` to a fresh local validator, so run a successful
 `anchor build` first; `--skip-build` then reuses that artifact and avoids rebuilding with the default
 toolchain.
+
+CI runs the same build and test suite on every push and pull request, and fails if the committed IDL
+in `sdk/src/idl/` no longer matches what `anchor idl build` produces from the program. It also runs
+`cargo audit` on `Cargo.lock`.
 
 ## SDK
 
