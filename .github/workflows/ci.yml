@@ -79,6 +79,9 @@ jobs:
           # `anchor test` needs a provider wallet; the local validator funds it.
           solana-keygen new --no-bip39-passphrase -s -o "$HOME/.config/solana/id.json"
           anchor test --skip-build
+      - name: Validator log
+        if: failure()
+        run: tail -n 40 .anchor/test-ledger/validator.log || true
 
   upgrade:
     name: upgrade path from 2.0.2 (local validator)

@@ -29,3 +29,6 @@ upgradeable = true
 
 [test.validator]
 deactivate_feature = ["zkdoVwnSFnSLtGJG7irJPEYUpmb4i7sGMGcnN6T9rnC"]
+# Once [test.validator] exists, anchor 0.31 passes --bind-address 0.0.0.0, which Agave 4.x
+# rejects at startup (UnspecifiedIpAddr). The tests only need localhost.
+bind_address = "127.0.0.1"
