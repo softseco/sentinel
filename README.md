@@ -31,7 +31,8 @@ own transfer-gating program. Set a policy once; Sentinel enforces it on every mo
 ## What's here
 
 - **On-chain program** (Rust / Anchor) — the transfer hook + policy, allowlist, blocklist, limit.
-  15 passing integration tests.
+  26 integration tests on a local validator, 11 of them with real Token-2022 confidential
+  transfers, where Token-2022 itself calls the hook. CI runs all of them on every push.
 - **TypeScript SDK** — [`@softseco/sentinel`](https://www.npmjs.com/package/@softseco/sentinel):
   create a compliant mint, manage the policy and entries, hook-aware transfers, and reads.
 - **Runnable demo** — [`sdk/examples/compliant-asset-demo.ts`](./sdk/examples/compliant-asset-demo.ts).
@@ -81,7 +82,7 @@ tests/               integration tests (anchor test)
 
 ## Status
 
-**v2.0.2** — program + SDK + demo, 15 integration tests, self-audited before release, deployed on
+**v2.0.2** — program + SDK + demo, 26 integration tests, self-audited before release, deployed on
 devnet (see [CHANGELOG.md](./CHANGELOG.md) · [SECURITY.md](./SECURITY.md)). Not independently
 audited. Breaking since 1.0.0: `PolicyConfig` gained `allow_confidential` and existing policy
 accounts must be recreated. A confidential transfer through a Sentinel mint, with the blocklist
@@ -93,7 +94,7 @@ enforced on the same transfer, runs end-to-end on devnet in
 ```bash
 anchor build -- --tools-version v1.57                                   # program
 anchor idl build -o sdk/src/idl/sentinel.json -t sdk/src/idl/sentinel.ts  # IDL
-anchor test --skip-build                                                # 15 integration tests
+anchor test --skip-build                                                # 26 integration tests
 cd sdk && npm install && npm run build                                  # SDK
 ```
 

@@ -4,6 +4,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html). The on-chain program and the
 `@softseco/sentinel` SDK are versioned together.
 
+## [Unreleased]
+
+### Added
+- Integration tests with real Token-2022 confidential transfers (`tests/confidential.ts`). The
+  sender's proofs go through the ZK ElGamal Proof Program and Token-2022 calls Sentinel as the
+  hook, so the rules are checked on the path a real confidential transfer takes: the limit refuses
+  confidential transfers until the issuer sets `allow_confidential`, the blocklist stops a blocked
+  sender or recipient, the allowlist applies, and the mint's auditor can still read the amounts
+  the hook could not see. Until now the confidential branch was tested by calling the hook
+  directly with `u64::MAX`. The suite is 26 tests.
+- CI builds the program and runs the whole suite on a local validator, checks that the committed
+  IDL matches the program, and runs `cargo audit`.
+
 ## [2.0.2] - 2026-09-28
 
 Documentation and packaging only. The program code is unchanged and was not redeployed: the devnet
@@ -120,6 +133,7 @@ Informational (no exploit): the transfer hook relies on Token-2022's determinist
 resolution for the allow/block entries; documented in-code. Not independently audited — review
 before production use.
 
+[Unreleased]: https://github.com/softseco/sentinel/compare/v2.0.2...HEAD
 [2.0.2]: https://github.com/softseco/sentinel/releases/tag/v2.0.2
 [2.0.1]: https://github.com/softseco/sentinel/releases/tag/v2.0.1
 [2.0.0]: https://github.com/softseco/sentinel/releases/tag/v2.0.0

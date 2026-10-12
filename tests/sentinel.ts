@@ -125,11 +125,9 @@ describe("sentinel — policy rules", () => {
   // Token-2022 invokes the transfer hook for a *confidential* transfer with
   // amount = u64::MAX, because the real amount is encrypted and never reaches
   // the hook. These tests drive that branch by calling `transfer_hook`
-  // directly: a genuine confidential transfer additionally needs the
-  // Token-2022 confidential-transfer extension and the ZK ElGamal Proof
-  // program on the validator, which is out of scope for this suite. What is
-  // under test here is the program's own decision for that amount, which is
-  // the part that can be wrong.
+  // directly, which isolates the program's own decision for that amount.
+  // tests/confidential.ts covers the same rules with genuine confidential
+  // transfers, where Token-2022 itself calls the hook.
   const U64_MAX = new anchor.BN("18446744073709551615");
 
   const callHook = (amount: anchor.BN, destOwner: PublicKey) =>

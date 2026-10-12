@@ -8,7 +8,8 @@ Thanks for your interest in Sentinel. This repository holds two pieces that are 
 ## Prerequisites
 
 - **Rust** (stable) with `rustfmt` and `clippy`
-- **Solana CLI** ≥ 2.1 (tested on 4.2.2) and `solana-test-validator`
+- **Solana CLI** 4.x (tested on 4.2.2) and its `solana-test-validator`; the confidential-transfer
+  tests do not run on 2.x or 3.x
 - **Anchor** 0.31.0, installed through `avm`
 - **Node ≥ 20** and npm
 
@@ -53,12 +54,17 @@ the program.
 ## Tests
 
 ```bash
-anchor test --skip-build   # 15 integration tests against a local validator
+anchor test --skip-build   # 26 integration tests against a local validator
 ```
 
 `anchor test` deploys `target/deploy/sentinel.so` to a fresh local validator, so run a successful
 `anchor build` first; `--skip-build` then reuses that artifact and avoids rebuilding with the default
 toolchain.
+
+`tests/confidential.ts` makes real confidential transfers. It needs `solana-test-validator` from
+Agave 4.x first in `PATH` (2.x and 3.x reject today's ZK proofs), and the validator that
+`anchor test` starts loads a newer Token-2022 from `tests/fixtures/`, which `Anchor.toml` sets up.
+See [`tests/fixtures/README.md`](./tests/fixtures/README.md).
 
 CI runs the same build and test suite on every push and pull request, and fails if the committed IDL
 in `sdk/src/idl/` no longer matches what `anchor idl build` produces from the program. It also runs
