@@ -3,6 +3,7 @@
 **Programmable compliance for Token-2022 tokenized assets — built on Transfer Hooks.**
 
 [![npm (SDK)](https://img.shields.io/npm/v/@softseco/sentinel.svg?label=%40softseco%2Fsentinel)](https://www.npmjs.com/package/@softseco/sentinel)
+[![CI](https://github.com/softseco/sentinel/actions/workflows/ci.yml/badge.svg)](https://github.com/softseco/sentinel/actions/workflows/ci.yml)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](./LICENSE)
 
 Sentinel attaches compliance rules to a Token-2022 mint so **every transfer is checked on-chain**:
