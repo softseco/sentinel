@@ -54,7 +54,7 @@ the program.
 ## Tests
 
 ```bash
-anchor test --skip-build   # 44 integration tests against a local validator
+anchor test --skip-build   # 47 integration tests against a local validator
 ```
 
 `anchor test` deploys `target/deploy/sentinel.so` to a fresh local validator, so run a successful
@@ -69,6 +69,10 @@ See [`tests/fixtures/README.md`](./tests/fixtures/README.md).
 `bash scripts/upgrade-check.sh` checks the upgrade path from the last release before 2.1 (2.0.2):
 it builds both versions, sets a mint up under the old one, upgrades in place on a local validator
 and runs `tests-upgrade/`.
+
+`tests-fuzz/` is a separate Cargo project: model-based fuzzing of the built program in LiteSVM
+(`cd tests-fuzz && cargo test --test model -- --nocapture`, after `anchor build`). See its README
+for the settings and for reproducing a failure from its seed.
 
 CI runs the same build and test suite on every push and pull request, and fails if the committed IDL
 in `sdk/src/idl/` no longer matches what `anchor idl build` produces from the program. It also runs
