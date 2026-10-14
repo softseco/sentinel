@@ -21,7 +21,9 @@
 //! confidential transfers unchanged.
 use anchor_lang::prelude::*;
 use anchor_lang::solana_program::program_option::COption;
-use anchor_lang::system_program::{create_account, transfer, CreateAccount, Transfer};
+use anchor_lang::system_program::{
+    allocate, assign, create_account, transfer, Allocate, Assign, CreateAccount, Transfer,
+};
 use anchor_spl::token_interface::Mint;
 use spl_tlv_account_resolution::{
     account::ExtraAccountMeta, seeds::Seed, state::ExtraAccountMetaList,
@@ -108,25 +110,18 @@ pub mod sentinel {
         ctx: Context<InitializeExtraAccountMetaList>,
     ) -> Result<()> {
         let extra_account_metas = extra_account_metas()?;
-
-        let account_size = ExtraAccountMetaList::size_of(extra_account_metas.len())? as u64;
-        let lamports = Rent::get()?.minimum_balance(account_size as usize);
+        let account_size = ExtraAccountMetaList::size_of(extra_account_metas.len())?;
 
         let mint_key = ctx.accounts.mint.key();
         let bump = ctx.bumps.extra_account_meta_list;
         let signer_seeds: &[&[&[u8]]] = &[&[META_LIST_SEED, mint_key.as_ref(), &[bump]]];
 
-        create_account(
-            CpiContext::new(
-                ctx.accounts.system_program.to_account_info(),
-                CreateAccount {
-                    from: ctx.accounts.payer.to_account_info(),
-                    to: ctx.accounts.extra_account_meta_list.to_account_info(),
-                },
-            )
-            .with_signer(signer_seeds),
-            lamports,
+        create_program_account(
+            &ctx.accounts.payer.to_account_info(),
+            &ctx.accounts.extra_account_meta_list.to_account_info(),
+            &ctx.accounts.system_program.to_account_info(),
             account_size,
+            signer_seeds,
             ctx.program_id,
         )?;
 
@@ -318,6 +313,73 @@ pub mod sentinel {
             _ => Err(ProgramError::InvalidInstructionData.into()),
         }
     }
+}
+
+/// Create `account`, a PDA of this program signed for by `signer_seeds`, with `space` bytes, rent
+/// paid by `payer`. Done the way Anchor's `init` does it: anyone can send lamports to any address,
+/// and System `CreateAccount` refuses an address that already holds some, so an address that was
+/// funded first is topped up, allocated and assigned instead. Without this, a stranger could block
+/// a mint's setup for good by funding its meta-list address before the issuer creates the list.
+fn create_program_account<'info>(
+    payer: &AccountInfo<'info>,
+    account: &AccountInfo<'info>,
+    system_program: &AccountInfo<'info>,
+    space: usize,
+    signer_seeds: &[&[&[u8]]],
+    owner: &Pubkey,
+) -> Result<()> {
+    let required = Rent::get()?.minimum_balance(space);
+    let current = account.lamports();
+    if current == 0 {
+        return create_account(
+            CpiContext::new(
+                system_program.clone(),
+                CreateAccount {
+                    from: payer.clone(),
+                    to: account.clone(),
+                },
+            )
+            .with_signer(signer_seeds),
+            required,
+            space as u64,
+            owner,
+        );
+    }
+    let top_up = required.saturating_sub(current);
+    if top_up > 0 {
+        transfer(
+            CpiContext::new(
+                system_program.clone(),
+                Transfer {
+                    from: payer.clone(),
+                    to: account.clone(),
+                },
+            ),
+            top_up,
+        )?;
+    }
+    // `allocate` fails ("already in use") unless the account is still an empty system account, so
+    // an existing list cannot be overwritten this way.
+    allocate(
+        CpiContext::new(
+            system_program.clone(),
+            Allocate {
+                account_to_allocate: account.clone(),
+            },
+        )
+        .with_signer(signer_seeds),
+        space as u64,
+    )?;
+    assign(
+        CpiContext::new(
+            system_program.clone(),
+            Assign {
+                account_to_assign: account.clone(),
+            },
+        )
+        .with_signer(signer_seeds),
+        owner,
+    )
 }
 
 /// An entry account (allow or block) is "active" when it exists: owned by this
