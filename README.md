@@ -18,7 +18,7 @@ mint that sets `maxTransferAmount` refuses confidential transfers unless its pol
 The allowlist and blocklist work on addresses, which stay public, so they apply to confidential
 transfers exactly as they do to public ones.
 
-> **Status: `v2.0.2` — stable API, self-audited, deployed on Solana devnet (not independently audited).** Built by Softseco.
+> **Status: `v2.1.1` — stable API, self-audited, running on Solana devnet (not independently audited).** Built by Softseco.
 >
 > **Devnet program:** [`5fH1jj6XeZC96jPCxKiSb2onAXcs7f4rMeqMmSsP6puD`](https://explorer.solana.com/address/5fH1jj6XeZC96jPCxKiSb2onAXcs7f4rMeqMmSsP6puD?cluster=devnet)
 
@@ -32,9 +32,12 @@ own transfer-gating program. Set a policy once; Sentinel enforces it on every mo
 
 - **On-chain program** (Rust / Anchor) — the transfer hook + policy, allowlist, blocklist, limit;
   a two-step handover of the policy authority (to a multisig, for example); an event for every
-  policy change and every refused transfer. 44 integration tests on a local validator, 11 of them
+  policy change and every refused transfer. 47 integration tests on a local validator, 11 of them
   with real Token-2022 confidential transfers, where Token-2022 itself calls the hook. CI runs all
   of them on every push.
+- **Model-based fuzzing** — [`tests-fuzz/`](./tests-fuzz): random sequences of every instruction,
+  transfer and approval in LiteSVM, each outcome and the whole state checked against a model of
+  the rules after every step. CI runs a new random set on every push.
 - **Threat model** — [`docs/threat-model.md`](./docs/threat-model.md): what Sentinel protects, who
   is trusted, the invariants it keeps, and its known limits.
 - **TypeScript SDK** — [`@softseco/sentinel`](https://www.npmjs.com/package/@softseco/sentinel):
@@ -82,15 +85,18 @@ Terminal 2:  cd sdk && npm install && npm run demo
 programs/sentinel/   on-chain Anchor program
 sdk/                 @softseco/sentinel TypeScript SDK (+ examples/)
 tests/               integration tests (anchor test)
+tests-fuzz/          model-based fuzzing in LiteSVM (cargo test)
+docs/                threat model
 ```
 
 ## Status
 
-**v2.1.0** — program + SDK + demo, 44 integration tests, self-audited before release (see
-[CHANGELOG.md](./CHANGELOG.md) · [SECURITY.md](./SECURITY.md) ·
-[threat model](./docs/threat-model.md)). Not independently audited. The devnet program runs
-2.1.0 since 12 October 2026; mints set up before 2.1 call `update_extra_account_meta_list` once to
-get the delegate check. Breaking since 1.0.0: `PolicyConfig` gained `allow_confidential` and existing policy
+**v2.1.1** — program + SDK + demo, 47 integration tests and model-based fuzzing, self-audited
+before release (see [CHANGELOG.md](./CHANGELOG.md) · [SECURITY.md](./SECURITY.md) ·
+[threat model](./docs/threat-model.md)). Not independently audited. 2.1.1 fixes a way for a
+stranger to block a new mint's setup; mints already set up are not affected. The devnet program
+runs 2.1.0 since 12 October 2026; mints set up before 2.1 call `update_extra_account_meta_list`
+once to get the delegate check. Breaking since 1.0.0: `PolicyConfig` gained `allow_confidential` and existing policy
 accounts must be recreated. A confidential transfer through a Sentinel mint, with the blocklist
 enforced on the same transfer, runs end-to-end on devnet in
 [paper-devnet](https://github.com/softseco/paper-devnet).
@@ -100,7 +106,8 @@ enforced on the same transfer, runs end-to-end on devnet in
 ```bash
 anchor build -- --tools-version v1.57                                   # program
 anchor idl build -o sdk/src/idl/sentinel.json -t sdk/src/idl/sentinel.ts  # IDL
-anchor test --skip-build                                                # 44 integration tests
+anchor test --skip-build                                                # 47 integration tests
+cd tests-fuzz && cargo test --test model -- --nocapture                 # fuzzing (needs the build)
 cd sdk && npm install && npm run build                                  # SDK
 ```
 

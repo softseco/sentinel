@@ -3,7 +3,7 @@
 Sentinel is security-sensitive, on-chain compliance software (a Token-2022 transfer hook that
 gates asset transfers).
 
-> **Maturity:** `v2.1.0`, self-audited, validated against a local validator and deployed on devnet. **Not independently
+> **Maturity:** `v2.1.1`, self-audited, validated against a local validator and by model-based fuzzing, and running on devnet (2.1.0). **Not independently
 > audited and not production-proven.** Review carefully before any mainnet use.
 
 ## Supported versions
@@ -40,7 +40,9 @@ opaquely or skipping a limit that the policy still advertises as enforced.
 
 `v2.1.0` fixed a gap found in our review, on devnet, before any mainnet use: the blocklist did not
 cover the authority signing a transfer, so a blocklisted delegate could move a clean holder's
-tokens. The review, the invariants it checks and the known limits are in
+tokens. `v2.1.1` fixed another, found while preparing for an independent audit: a stranger could
+block a new mint's setup for good by funding its meta-list address first. The review, the
+invariants it checks, how they are tested and the known limits are in
 [docs/threat-model.md](./docs/threat-model.md).
 
 A self-audit is **not** a substitute for an independent audit.

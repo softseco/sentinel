@@ -1,6 +1,6 @@
 [package]
 name = "sentinel"
-version = "2.1.0"
+version = "2.1.1"
 description = "Programmable compliance for Token-2022 tokenized assets, built on Transfer Hooks."
 edition = "2021"
 

@@ -1,11 +1,12 @@
 # Sentinel threat model
 
-Version 2.1.0, 12 October 2026. Written by the author as part of a self-review. Sentinel has not
+Version 2.1.1, 14 October 2026 (first written for 2.1.0, 12 October). Written by the author as
+part of a self-review. Sentinel has not
 been independently audited; this document is meant to make that audit faster and cheaper.
 
 ## Scope
 
-The on-chain program in `programs/sentinel/src/lib.rs`: one file, about 710 lines of Rust without
+The on-chain program in `programs/sentinel/src/lib.rs`: one file, about 770 lines of Rust without
 blank lines and comments, built with Anchor 0.31.1. Thirteen instructions: `initialize_policy`,
 `update_policy`, `initialize_extra_account_meta_list`, `update_extra_account_meta_list`,
 `add_to_allowlist`, `remove_from_allowlist`, `add_to_blocklist`, `remove_from_blocklist`,
@@ -44,7 +45,9 @@ in progress. All are PDAs of the program, seeded by the mint.
 ## Invariants
 
 These must hold for every mint whose transfer hook is Sentinel. The integration tests check each
-of them; the tests named here are in `tests/`.
+of them; the tests named here are in `tests/`. The model-based fuzz tests in `tests-fuzz/` check
+all nine together, after every step of random sequences of operations (see "How the invariants are
+tested" below).
 
 1. **Fail closed.** If the policy or the meta list is missing, every transfer of the mint fails.
    (Anchor cannot load the policy account, or Token-2022 cannot resolve the hook's accounts.)
@@ -53,7 +56,9 @@ of them; the tests named here are in `tests/`.
    `propose_authority`, `cancel_authority_transfer` and `update_extra_account_meta_list` check
    `has_one = authority` against the policy. (`admin.ts`, `sentinel.ts`)
 3. **Only the mint authority creates a policy and a meta list**, so a stranger cannot set up
-   rules for someone else's mint first. (`sentinel.ts`, `admin.ts`)
+   rules for someone else's mint first, and a stranger cannot stop the mint authority from
+   creating them either, for example by funding their addresses first (2.1.1). (`sentinel.ts`,
+   `admin.ts`, `setup.ts`)
 4. **A handover needs both sides.** The policy authority changes only when the proposed authority
    signs `accept_authority`; until then the old authority can cancel. (`admin.ts`, `sdk.ts`)
 5. **Blocklist.** With the blocklist on, no transfer succeeds whose sender, recipient or signing
@@ -89,6 +94,14 @@ These follow from how Token-2022 and transfer hooks work. They are documented, n
   read as confidential. It needs a supply of at least `u64::MAX`, so in practice it cannot happen.
 - **Mints set up before 2.1** do not check the transfer authority until the policy authority runs
   `update_extra_account_meta_list` once.
+- **A self-transfer never reaches the hook.** When the source and destination accounts are the
+  same, Token-2022 (v11.1) returns before calling the transfer hook. Nothing moves, so no rule is
+  bypassed, but such a transfer succeeds even for a blocklisted owner and leaves no `TransferRefused`
+  event. The fuzz tests model this.
+- **Setup needs a mint authority that can sign.** The policy and the meta list are created by the
+  mint authority. Set Sentinel up before revoking the mint authority (a fixed-supply token), and
+  note that an SPL Token multisig account cannot sign for it; a multisig vault program such as
+  Squads, which signs through CPI, can.
 
 ## Findings of our own review (12 October 2026)
 
@@ -101,6 +114,29 @@ These follow from how Token-2022 and transfer hooks work. They are documented, n
 | 5 | Anyone can call `transfer_hook` directly. Harmless while the hook holds no state (invariant 9). A future stateful rule, such as a per-wallet daily limit, must first check that Token-2022 is mid-transfer (the `transferring` flag on the source account). | Informational | Recorded as a rule for 2.2. |
 | 6 | Minting does not run the hook, so the allowlist does not limit who can receive newly minted tokens. | Informational | Documented above. |
 | 7 | The devnet program's upgrade authority is a single key. | n/a on devnet | Mainnet: multisig upgrade authority and a verified build, before launch. |
+| 8 | A stranger could block a mint's setup for good. `initialize_extra_account_meta_list` created the list with System `CreateAccount`, which refuses an address that already holds lamports, and anyone can send lamports to any address. About 0.0009 SOL sent to a mint's meta-list address before the issuer created the list made the list impossible to create, and every transfer of the mint then failed. Found in our own review on 14 October; reproduced on a local validator, and found again by the fuzz tests on the 2.1.0 build. The policy account was not affected: Anchor's `init` already handles a funded address. | Medium (a permanent denial of service for a mint whose list is created in a separate transaction) | Fixed in 2.1.1: the list is created the way Anchor's `init` does it (top up the rent, allocate, assign) when its address already holds lamports. A second `initialize_extra_account_meta_list` still fails. Tests: `setup.ts`, `tests-fuzz`. On 2.1.0, creating the meta list in the same transaction as the mint avoids it. Mints already set up are not affected. |
+
+## How the invariants are tested
+
+- **Integration tests** (`tests/`, 47 on a local validator with Token-2022 v11.1 and the ZK ElGamal
+  Proof Program): each rule, each instruction's authority checks, delegates, the handover, the
+  meta-list update, events, setup with funded addresses, and 11 real confidential transfers where
+  Token-2022 itself calls the hook.
+- **Model-based fuzzing** (`tests-fuzz/`, in LiteSVM with the same Token-2022 build). Random
+  sequences of every instruction, signed by the right authority or by someone else; public
+  transfers by owners and by delegates; approvals; direct calls to the hook with public amounts,
+  with `u64::MAX` (confidential) and with made-up accounts; strangers funding the program's
+  addresses before setup. A plain Rust model of the rules predicts each outcome, down to the exact
+  error code, and after every step the test compares the whole state with the model: the policy,
+  every entry, a pending handover, balances, delegations, the meta list's bytes and the total
+  supply. CI runs a new random set of cases on every push; a failure prints the seed that
+  reproduces it.
+- **Is the fuzzing strong enough?** It found finding 8 on the 2.1.0 build. We also broke the
+  program on purpose in 26 ways (a dropped authority check, a rule switched off, an off-by-one),
+  and the fuzz tests catch all 26. They execute 403 of the 421 lines of `lib.rs` that carry code
+  (95.7%); the other 18 are listed with the reason. Both are in `tests-fuzz/README.md`.
+- **CI** also runs `cargo clippy -D warnings`, `cargo audit`, a check that the committed IDL matches
+  the program, and an in-place upgrade from 2.0.2.
 
 ## What we ask an auditor to look at
 
@@ -110,6 +146,8 @@ These follow from how Token-2022 and transfer hooks work. They are documented, n
   public transfers, delegated transfers and confidential transfers.
 - `update_extra_account_meta_list`: the resize, the rent top-up, and the rewrite of an existing
   list.
+- `create_program_account` (2.1.1): creating the meta list at an address that already holds
+  lamports.
 - The authority handover, including cancel and accept races.
 - Invariants 1–9 above.
 

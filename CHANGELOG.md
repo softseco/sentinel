@@ -8,6 +8,39 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html). The on-chain
 
 _Nothing yet._
 
+## [2.1.1] - 2026-10-14
+
+A fix found while preparing for an independent audit, and the tests that come with that work. No
+breaking changes and no new instructions: accounts, instructions, error codes and the IDL are the
+same as in 2.1.0. The SDK has no code changes; its version moves with the program's. The devnet
+program stays at 2.1.0 for now; the mints there are already set up, so the fix does not affect
+them.
+
+### Fixed
+- **A stranger could block a mint's setup for good.** `initialize_extra_account_meta_list` created
+  the meta list with System `CreateAccount`, which refuses an address that already holds lamports,
+  and anyone can send lamports to any address. Sending about 0.0009 SOL to a mint's meta-list
+  address before the issuer created the list made the list impossible to create, and every
+  transfer of the mint then failed. The list is now created the way Anchor's `init` creates
+  accounts: when the address already holds lamports, the issuer tops up the rent and the program
+  allocates and assigns the account. A second `initialize_extra_account_meta_list` for the same
+  mint still fails. The policy account was never affected (Anchor's `init` handles it). On 2.1.0,
+  creating the meta list in the same transaction as the mint avoids the problem. Found in our own
+  review.
+
+### Added
+- `tests/setup.ts`: setup with the policy and meta-list addresses funded by a stranger first (less
+  and more than the rent), and a second meta list refused. The suite is 47 tests.
+- `tests-fuzz/`: model-based fuzzing in LiteSVM, next to the same Token-2022 v11.1 build the
+  integration tests use. Random sequences of every instruction (signed by the right authority or
+  by someone else), public transfers by owners and delegates, approvals, direct calls to the hook
+  (public amounts, `u64::MAX`, made-up accounts) and funded addresses; a Rust model of the rules
+  predicts every outcome, down to the error code, and the whole state is compared with the model
+  after every step. It finds the bug above on the 2.1.0 build. CI runs a new random set of 256
+  cases on every push.
+- Threat model: finding 8, two known limits (a self-transfer never reaches the hook; setup needs a
+  mint authority that can sign), and how the invariants are tested.
+
 ## [2.1.0] - 2026-10-12
 
 Deployed on devnet on 12 October 2026: the program at `5fH1jj6XeZC96jPCxKiSb2onAXcs7f4rMeqMmSsP6puD`
@@ -189,7 +222,8 @@ Informational (no exploit): the transfer hook relies on Token-2022's determinist
 resolution for the allow/block entries; documented in-code. Not independently audited — review
 before production use.
 
-[Unreleased]: https://github.com/softseco/sentinel/compare/v2.1.0...HEAD
+[Unreleased]: https://github.com/softseco/sentinel/compare/v2.1.1...HEAD
+[2.1.1]: https://github.com/softseco/sentinel/releases/tag/v2.1.1
 [2.1.0]: https://github.com/softseco/sentinel/releases/tag/v2.1.0
 [2.0.2]: https://github.com/softseco/sentinel/releases/tag/v2.0.2
 [2.0.1]: https://github.com/softseco/sentinel/releases/tag/v2.0.1
