@@ -1,22 +1,27 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Model-based fuzzing of Sentinel.
 //!
-//! Each case sets up a mint whose transfer hook is Sentinel, then runs a random sequence of
-//! operations: every Sentinel instruction, signed by the right authority or by someone else; public
-//! transfers through Token-2022, by owners and by delegates; approvals; direct calls to the hook
-//! (public and confidential amounts, and with made-up accounts); and strangers funding the
-//! program's addresses before setup. A plain Rust model predicts each outcome. After every
-//! operation the test checks that
+//! Each case sets up a mint whose transfer hook is Sentinel and whose freeze authority is Sentinel's
+//! freeze address, the issuer, or no one, then runs a random sequence of operations: every Sentinel
+//! instruction, signed by the right authority or by someone else; blocks, freezes and thaws with
+//! reasons, on the right accounts and on wrong ones; the issuer handing the freeze authority to
+//! Sentinel; public transfers through Token-2022, by owners and by delegates; approvals; direct
+//! calls to the hook (public and confidential amounts, and with made-up accounts); and strangers
+//! funding the program's addresses before setup. A plain Rust model predicts each outcome. After
+//! every operation the test checks that
 //!
-//! - the outcome matches the model (success, or the exact Sentinel error where the model names one),
-//! - the policy, the allow and block entries, a pending handover, every balance and delegation, and
-//!   the meta list are exactly what the model says,
+//! - the outcome matches the model (success, or the exact error where the model names one),
+//! - the policy, the allow and block entries, a pending handover, every balance, delegation and
+//!   frozen state, the mint's freeze authority, and the meta list are exactly what the model says,
+//! - a successful operation emitted exactly the `EnforcementAction` events the model expects,
+//!   field by field, and no others,
 //! - the total supply is unchanged by transfers.
 //!
 //! The model is the threat model's invariants written as code (`docs/threat-model.md`):
 //! fail closed (1), only the policy authority changes rules (2), only the mint authority sets up (3),
 //! handover needs both sides (4), blocklist (5), allowlist (6), limit and confidential amounts (7),
-//! entries cannot be forged (8), the hook holds no state (9).
+//! entries cannot be forged (8), the hook holds no state (9), only the policy authority freezes,
+//! and only through the mint's own freeze address (10), enforcement is recorded (11).
 //!
 //! `FUZZ_CASES` (default 64), `FUZZ_STEPS` (default 60) and `FUZZ_SEED` (default fixed) set the run.
 //! A failure prints the seed, the case and the operations that led to it.
@@ -90,15 +95,31 @@ enum Op {
     UpdateMetaList {
         signer: Who,
     },
+    /// `add_to_*`, or `block_wallet` when there is a reason.
     AddEntry {
         block: bool,
         signer: Who,
         wallet: Who,
+        reason: Option<Reason>,
     },
+    /// `remove_from_*`, or `unblock_wallet` when there is a reason.
     RemoveEntry {
         block: bool,
         signer: Who,
         wallet: Who,
+        reason: Option<Reason>,
+    },
+    /// `freeze_token_account`, or `thaw_token_account` when `thaw`.
+    Freeze {
+        signer: Who,
+        target: Target,
+        thaw: bool,
+        reason: Reason,
+    },
+    /// Token-2022 `SetAuthority`: `signer` names Sentinel's freeze address as the mint's freeze
+    /// authority. Only the current freeze authority can; once Sentinel holds it, no one can.
+    HandOverFreeze {
+        signer: Who,
     },
     Propose {
         signer: Who,
@@ -160,6 +181,28 @@ enum Fifth {
     EntryOf(Who),
 }
 
+/// The account a freeze or thaw names.
+#[derive(Clone, Copy, Debug)]
+enum Target {
+    /// Wallet `i`'s token account of the mint.
+    Account(usize),
+    /// A token account of another mint.
+    OtherMint,
+    /// The policy account: not a token account.
+    Policy,
+    /// The mint itself: owned by Token-2022, but not a token account.
+    Mint,
+}
+
+/// Who holds the mint's freeze authority.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum FreezeBy {
+    Sentinel,
+    Issuer,
+    #[default]
+    NoOne,
+}
+
 #[derive(Clone, Copy, Debug)]
 enum ProposeTo {
     Who(Who),
@@ -174,6 +217,8 @@ struct World {
     nobody: Pubkey,
     mint: Pubkey,
     accounts: Vec<Pubkey>,
+    /// Wallet 0's token account of another mint.
+    other_account: Pubkey,
     meta_list_bytes: Option<Vec<u8>>,
 }
 
@@ -203,6 +248,8 @@ struct Model {
     block: BTreeSet<Pubkey>,
     balances: Vec<u64>,
     delegations: Vec<Option<(Pubkey, u64)>>,
+    frozen: Vec<bool>,
+    freeze_by: FreezeBy,
     supply: u64,
 }
 
@@ -264,6 +311,19 @@ fn random_rules(rng: &mut Rng) -> Rules {
     }
 }
 
+fn random_reason(rng: &mut Rng) -> Reason {
+    let code = match rng.below(4) {
+        0 => 0,
+        1 | 2 => 1 + rng.below(7) as u16,
+        _ => rng.next() as u16,
+    };
+    let mut case_ref = [0u8; 32];
+    for chunk in case_ref.chunks_mut(8) {
+        chunk.copy_from_slice(&rng.next().to_le_bytes());
+    }
+    Reason { code, case_ref }
+}
+
 fn random_who(rng: &mut Rng, model: &Model, world: &World) -> Who {
     // Bias towards the people who matter: the current authority and a pending one.
     let authority = model.authority();
@@ -313,7 +373,12 @@ fn random_amount(rng: &mut Rng, balance: u64, model: &Model) -> u64 {
 
 fn random_op(rng: &mut Rng, model: &Model, world: &World) -> Op {
     let wallet = |rng: &mut Rng| rng.below(WALLETS as u64) as usize;
-    match rng.below(100) {
+    // A pending handover lasts only until it is accepted or cancelled, and its checks (who
+    // accepts, who gets the proposal's rent back) matter: try accepting it more often.
+    if model.pending.is_some() && rng.chance(10) {
+        return random_accept(rng, model, world);
+    }
+    match rng.below(112) {
         0..=29 => {
             let from = wallet(rng);
             let to = if rng.chance(10) { from } else { wallet(rng) };
@@ -346,9 +411,21 @@ fn random_op(rng: &mut Rng, model: &Model, world: &World) -> Op {
                 random_amount(rng, model.balances[from], model)
             };
             let fifth = match rng.below(100) {
-                0..=84 => Fifth::Resolved,
-                85..=91 => Fifth::Policy,
-                _ => Fifth::EntryOf(random_who(rng, model, world)),
+                0..=74 => Fifth::Resolved,
+                75..=84 => Fifth::Policy,
+                _ => {
+                    // Mostly a blocklisted wallet's entry: only a real block entry tells a hook
+                    // that checks the entry's content from one that blocks on any entry.
+                    let blocked: Vec<Pubkey> = model.block.iter().copied().collect();
+                    if !blocked.is_empty() && rng.chance(70) {
+                        Fifth::EntryOf(who_of(
+                            world,
+                            blocked[rng.below(blocked.len() as u64) as usize],
+                        ))
+                    } else {
+                        Fifth::EntryOf(random_who(rng, model, world))
+                    }
+                }
             };
             Op::Execute {
                 from,
@@ -396,24 +473,33 @@ fn random_op(rng: &mut Rng, model: &Model, world: &World) -> Op {
                 rng.pick(&[Who::Issuer, Who::Nobody])
             };
             let set = if block { &model.block } else { &model.allow };
+            // Half the blocklist changes go through block_wallet / unblock_wallet with a reason.
+            let reason = if block && rng.chance(50) {
+                Some(random_reason(rng))
+            } else {
+                None
+            };
             // Remove what is there more often than not, so lists shrink as well as grow.
             if set.contains(&world.key(target)) && rng.chance(60) {
                 Op::RemoveEntry {
                     block,
                     signer,
                     wallet: target,
+                    reason,
                 }
             } else if rng.chance(80) {
                 Op::AddEntry {
                     block,
                     signer,
                     wallet: target,
+                    reason,
                 }
             } else {
                 Op::RemoveEntry {
                     block,
                     signer,
                     wallet: target,
+                    reason,
                 }
             }
         }
@@ -432,19 +518,7 @@ fn random_op(rng: &mut Rng, model: &Model, world: &World) -> Op {
         79..=80 => Op::Cancel {
             signer: random_who(rng, model, world),
         },
-        81..=84 => {
-            let signer = match model.pending {
-                Some(p) if rng.chance(70) => who_of(world, p),
-                _ => random_who(rng, model, world),
-            };
-            // The account that gets the proposal's rent back must be the outgoing authority; try
-            // someone else often enough that a missing check shows.
-            let previous = match model.authority() {
-                Some(a) if rng.chance(65) => who_of(world, a),
-                _ => Who::Wallet(rng.below(WALLETS as u64) as usize),
-            };
-            Op::Accept { signer, previous }
-        }
+        81..=84 => random_accept(rng, model, world),
         85..=87 => Op::UpdateMetaList {
             signer: random_who(rng, model, world),
         },
@@ -455,11 +529,49 @@ fn random_op(rng: &mut Rng, model: &Model, world: &World) -> Op {
         92..=95 => Op::InitMetaList {
             signer: random_who(rng, model, world),
         },
-        _ => Op::Prefund {
+        96..=99 => Op::Prefund {
             meta_list: rng.chance(50),
             lamports: rng.pick(&[1_000_000, 890_880, 5_000_000, 100_000_000]),
         },
+        100..=109 => {
+            let target = match rng.below(20) {
+                0 => Target::Policy,
+                1 => Target::Mint,
+                2 => Target::OtherMint,
+                _ => Target::Account(wallet(rng)),
+            };
+            let frozen = matches!(target, Target::Account(i) if model.frozen[i]);
+            // Mostly the change that makes sense (thaw what is frozen); sometimes the other.
+            let thaw = if rng.chance(75) { frozen } else { !frozen };
+            Op::Freeze {
+                signer: random_who(rng, model, world),
+                target,
+                thaw,
+                reason: random_reason(rng),
+            }
+        }
+        _ => Op::HandOverFreeze {
+            signer: if rng.chance(70) {
+                Who::Issuer
+            } else {
+                random_who(rng, model, world)
+            },
+        },
     }
+}
+
+fn random_accept(rng: &mut Rng, model: &Model, world: &World) -> Op {
+    let signer = match model.pending {
+        Some(p) if rng.chance(70) => who_of(world, p),
+        _ => random_who(rng, model, world),
+    };
+    // The account that gets the proposal's rent back must be the outgoing authority; try someone
+    // else often enough that a missing check shows.
+    let previous = match model.authority() {
+        Some(a) if rng.chance(65) => who_of(world, a),
+        _ => Who::Wallet(rng.below(WALLETS as u64) as usize),
+    };
+    Op::Accept { signer, previous }
 }
 
 impl fmt::Display for Op {
@@ -473,6 +585,8 @@ impl fmt::Display for Op {
 fn step(world: &mut World, model: &mut Model, op: &Op) -> Result<Expect, String> {
     let mint = world.mint;
     let signer_ok = |who: Who| who != Who::Nobody;
+    // The `EnforcementAction` events a successful operation must emit, in order.
+    let mut events: Vec<Enforcement> = Vec::new();
     let (expect, ixs, signers): (Expect, Vec<solana_instruction::Instruction>, Vec<Who>) = match op
         .clone()
     {
@@ -552,6 +666,7 @@ fn step(world: &mut World, model: &mut Model, op: &Op) -> Result<Expect, String>
             block,
             signer,
             wallet,
+            reason,
         } => {
             let s = world.key(signer);
             let w = world.key(wallet);
@@ -573,16 +688,27 @@ fn step(world: &mut World, model: &mut Model, op: &Op) -> Result<Expect, String>
                     model.allow.insert(w);
                 }
             }
-            (
-                expect,
-                vec![ix::add_to_list(block, s, mint, w)],
-                vec![signer],
-            )
+            let ix = match reason {
+                Some(reason) => {
+                    events.push(Enforcement {
+                        mint,
+                        wallet: w,
+                        token_account: Pubkey::default(),
+                        action: Action::Block,
+                        reason,
+                        authority: s,
+                    });
+                    ix::block_with_reason(true, s, mint, w, reason)
+                }
+                None => ix::add_to_list(block, s, mint, w),
+            };
+            (expect, vec![ix], vec![signer])
         }
         Op::RemoveEntry {
             block,
             signer,
             wallet,
+            reason,
         } => {
             let s = world.key(signer);
             let w = world.key(wallet);
@@ -604,9 +730,90 @@ fn step(world: &mut World, model: &mut Model, op: &Op) -> Result<Expect, String>
                     model.allow.remove(&w);
                 }
             }
+            let ix = match reason {
+                Some(reason) => {
+                    events.push(Enforcement {
+                        mint,
+                        wallet: w,
+                        token_account: Pubkey::default(),
+                        action: Action::Unblock,
+                        reason,
+                        authority: s,
+                    });
+                    ix::block_with_reason(false, s, mint, w, reason)
+                }
+                None => ix::remove_from_list(block, s, mint, w),
+            };
+            (expect, vec![ix], vec![signer])
+        }
+        Op::Freeze {
+            signer,
+            target,
+            thaw,
+            reason,
+        } => {
+            let s = world.key(signer);
+            let account = match target {
+                Target::Account(i) => world.accounts[i],
+                Target::OtherMint => world.other_account,
+                Target::Policy => policy_pda(&mint),
+                Target::Mint => mint,
+            };
+            // Anchor loads every account first (a missing policy fails there), then checks the
+            // constraints in field order: the mint's freeze authority, then the policy authority.
+            // Token-2022 checks the rest during the CPI.
+            let expect = match model.policy {
+                _ if !signer_ok(signer) => Expect::Err,
+                None => Expect::Err,
+                Some(_) if model.freeze_by != FreezeBy::Sentinel => {
+                    Expect::Code(code::FREEZE_AUTHORITY_NOT_SENTINEL)
+                }
+                Some((a, _)) if a != s => Expect::Code(code::UNAUTHORIZED),
+                Some(_) => match target {
+                    Target::Account(i) if model.frozen[i] == !thaw => {
+                        Expect::Code(token_code::INVALID_STATE)
+                    }
+                    Target::Account(_) => Expect::Ok,
+                    _ => Expect::Err,
+                },
+            };
+            if let (Expect::Ok, Target::Account(i)) = (expect, target) {
+                model.frozen[i] = !thaw;
+                events.push(Enforcement {
+                    mint,
+                    wallet: world.wallets[i].pubkey(),
+                    token_account: account,
+                    action: if thaw { Action::Thaw } else { Action::Freeze },
+                    reason,
+                    authority: s,
+                });
+            }
             (
                 expect,
-                vec![ix::remove_from_list(block, s, mint, w)],
+                vec![ix::set_frozen(!thaw, s, mint, account, reason)],
+                vec![signer],
+            )
+        }
+        Op::HandOverFreeze { signer } => {
+            let s = world.key(signer);
+            let expect = if signer_ok(signer)
+                && model.freeze_by == FreezeBy::Issuer
+                && s == world.issuer.pubkey()
+            {
+                Expect::Ok
+            } else {
+                Expect::Err
+            };
+            if expect == Expect::Ok {
+                model.freeze_by = FreezeBy::Sentinel;
+            }
+            (
+                expect,
+                vec![set_freeze_authority_ix(
+                    &mint,
+                    &s,
+                    &freeze_authority_pda(&mint),
+                )],
                 vec![signer],
             )
         }
@@ -678,17 +885,20 @@ fn step(world: &mut World, model: &mut Model, op: &Op) -> Result<Expect, String>
             amount,
         } => {
             let d = world.key(delegate);
-            approve(
-                &mut world.svm,
-                &world.issuer,
-                &world.wallets[owner],
-                &mint,
-                &world.accounts[owner],
-                &d,
-                amount,
-            );
-            model.delegations[owner] = Some((d, amount));
-            return check_state(world, model).map(|()| Expect::Ok);
+            let expect = if model.frozen[owner] {
+                Expect::Code(token_code::ACCOUNT_FROZEN)
+            } else {
+                Expect::Ok
+            };
+            if expect == Expect::Ok {
+                model.delegations[owner] = Some((d, amount));
+            }
+            let o = world.wallets[owner].pubkey();
+            (
+                expect,
+                vec![approve_ix(&o, &mint, &world.accounts[owner], &d, amount)],
+                vec![Who::Wallet(owner)],
+            )
         }
         Op::Transfer {
             from,
@@ -709,11 +919,19 @@ fn step(world: &mut World, model: &mut Model, op: &Op) -> Result<Expect, String>
                     Some(allowance) => allowance >= amount,
                     None => a == from_owner,
                 };
-            let expect = if !token_ok {
+            // Token-2022's order: a frozen source, then funds and authority, then a self-transfer
+            // returns, then a frozen destination, and only then the hook.
+            let expect = if !signer_ok(authority) {
+                Expect::Err
+            } else if model.frozen[from] {
+                Expect::Code(token_code::ACCOUNT_FROZEN)
+            } else if !token_ok {
                 Expect::Err
             } else if from == to {
                 // Token-2022 returns before calling the hook on a self-transfer: nothing moves.
                 Expect::Ok
+            } else if model.frozen[to] {
+                Expect::Code(token_code::ACCOUNT_FROZEN)
             } else if !model.meta_list {
                 Expect::Err // fail closed: Token-2022 cannot resolve the hook's accounts
             } else {
@@ -836,19 +1054,27 @@ fn step(world: &mut World, model: &mut Model, op: &Op) -> Result<Expect, String>
         .collect();
     let refs: Vec<&Keypair> = keypairs.iter().collect();
     let issuer = world.issuer.insecure_clone();
-    let result = send(&mut world.svm, &issuer, &refs, &ixs);
+    let result = send_logs(&mut world.svm, &issuer, &refs, &ixs);
     let ok = match (&result, expect) {
-        (Ok(()), Expect::Ok) => true,
+        (Ok(_), Expect::Ok) => true,
         (Err(e), Expect::Code(c)) => custom_code(e) == Some(c),
         (Err(_), Expect::Err) => true,
         _ => false,
     };
     if !ok {
         let got = match &result {
-            Ok(()) => "Ok".to_string(),
+            Ok(_) => "Ok".to_string(),
             Err(e) => format!("{:?}\n    logs: {:#?}", e.err, e.meta.logs),
         };
         return Err(format!("expected {expect:?}, got {got}"));
+    }
+    if let Ok(logs) = &result {
+        let emitted = enforcement_events(logs);
+        if emitted != events {
+            return Err(format!(
+                "EnforcementAction events {emitted:#?}, model {events:#?}"
+            ));
+        }
     }
     if expect == Expect::Ok {
         if let Op::InitMetaList { .. } | Op::UpdateMetaList { .. } = op {
@@ -902,8 +1128,27 @@ fn check_state(world: &World, model: &Model) -> Result<(), String> {
     if meta != world.meta_list_bytes {
         return Err("meta list bytes changed outside init/update".into());
     }
+    let freeze_authority = freeze_authority_of(svm, &mint);
+    let model_freeze_authority = match model.freeze_by {
+        FreezeBy::Sentinel => Some(freeze_authority_pda(&mint)),
+        FreezeBy::Issuer => Some(world.issuer.pubkey()),
+        FreezeBy::NoOne => None,
+    };
+    if freeze_authority != model_freeze_authority {
+        return Err(format!(
+            "freeze authority {freeze_authority:?}, model {:?}",
+            model.freeze_by
+        ));
+    }
     let mut total = 0;
     for (i, account) in world.accounts.iter().enumerate() {
+        let frozen = is_frozen(svm, account);
+        if frozen != model.frozen[i] {
+            return Err(format!(
+                "wallet {i}: frozen {frozen}, model {}",
+                model.frozen[i]
+            ));
+        }
         let (amount, delegate, delegated) = token_state(svm, account);
         total += amount;
         let model_delegation = model.delegations[i];
@@ -929,7 +1174,24 @@ fn setup(rng: &mut Rng) -> (World, Model, Vec<Op>) {
     for w in &wallets {
         fund(&mut svm, &w.pubkey(), 100_000_000_000);
     }
-    let mint = create_hooked_mint(&mut svm, &issuer).pubkey();
+    let freeze_by = match rng.below(20) {
+        0..=11 => FreezeBy::Sentinel,
+        12..=16 => FreezeBy::Issuer,
+        _ => FreezeBy::NoOne,
+    };
+    let mint = Keypair::new();
+    let freeze_authority = match freeze_by {
+        FreezeBy::Sentinel => Some(freeze_authority_pda(&mint.pubkey())),
+        FreezeBy::Issuer => Some(issuer.pubkey()),
+        FreezeBy::NoOne => None,
+    };
+    let mint = create_hooked_mint(&mut svm, &issuer, mint, freeze_authority.as_ref()).pubkey();
+    // Another mint whose freeze authority is Sentinel's address for that mint.
+    let other_mint = Keypair::new();
+    let other_freeze = freeze_authority_pda(&other_mint.pubkey());
+    let other_mint =
+        create_hooked_mint(&mut svm, &issuer, other_mint, Some(&other_freeze)).pubkey();
+    let other_account = create_token_account(&mut svm, &issuer, &other_mint, &wallets[0].pubkey());
     let accounts: Vec<Pubkey> = wallets
         .iter()
         .map(|w| create_token_account(&mut svm, &issuer, &mint, &w.pubkey()))
@@ -937,6 +1199,8 @@ fn setup(rng: &mut Rng) -> (World, Model, Vec<Op>) {
     let mut model = Model {
         balances: vec![0; WALLETS],
         delegations: vec![None; WALLETS],
+        frozen: vec![false; WALLETS],
+        freeze_by,
         ..Model::default()
     };
     for (i, account) in accounts.iter().enumerate() {
@@ -954,6 +1218,7 @@ fn setup(rng: &mut Rng) -> (World, Model, Vec<Op>) {
         nobody: Keypair::new().pubkey(),
         mint,
         accounts,
+        other_account,
         meta_list_bytes: None,
     };
     // Most cases start set up; some start bare (fail closed) or with pre-funded addresses.
@@ -979,6 +1244,12 @@ fn setup(rng: &mut Rng) -> (World, Model, Vec<Op>) {
     if rng.chance(85) {
         ops.push(Op::InitMetaList {
             signer: Who::Issuer,
+        });
+    }
+    if rng.chance(20) {
+        ops.push(Op::Propose {
+            signer: Who::Issuer,
+            new_authority: ProposeTo::Who(Who::Wallet(rng.below(WALLETS as u64) as usize)),
         });
     }
     (world, model, ops)
@@ -1011,11 +1282,20 @@ fn sentinel_matches_its_model() {
             } else {
                 random_op(&mut rng, &model, &world)
             };
-            let name = format!("{op:?}")
-                .split([' ', '{'])
-                .next()
-                .unwrap()
-                .to_string();
+            let name = match &op {
+                Op::Freeze { thaw: true, .. } => "Thaw".to_string(),
+                Op::AddEntry {
+                    reason: Some(_), ..
+                } => "BlockWallet".to_string(),
+                Op::RemoveEntry {
+                    reason: Some(_), ..
+                } => "UnblockWallet".to_string(),
+                _ => format!("{op:?}")
+                    .split([' ', '{'])
+                    .next()
+                    .unwrap()
+                    .to_string(),
+            };
             let before = model.clone();
             let result = step(&mut world, &mut model, &op);
             let outcome = match &result {

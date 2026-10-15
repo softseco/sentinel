@@ -26,7 +26,7 @@ cargo test --test model -- --nocapture
 | `SENTINEL_SO`, `TOKEN_2022_SO` | the paths above | Programs to load |
 
 The first build compiles the Solana runtime and takes several minutes. A default run then takes
-about 6 seconds and makes about 4,000 operations.
+about 8 seconds and makes about 4,000 operations.
 
 A failure prints the seed, the case, the step, what the model expected, what happened (with the
 program logs) and the operations that led there. `FUZZ_SEED=<seed>` reproduces it exactly.
@@ -34,16 +34,23 @@ program logs) and the operations that led there. `FUZZ_SEED=<seed>` reproduces i
 ## What a case does
 
 Setup: a mint with Sentinel as its transfer hook, five wallets with token accounts and random
-balances. Most cases then create the policy (random rules) and the meta list; some start without
-one or both, and some have a stranger fund the policy or meta-list address first.
+balances. The mint's freeze authority is Sentinel's freeze address in most cases, the issuer in
+some, and nobody in a few. Most cases then create the policy (random rules) and the meta list;
+some start without one or both, and some have a stranger fund the policy or meta-list address
+first. A second mint provides a token account that is not the first mint's.
 
 Then random operations, each picked from:
 
 - every Sentinel instruction, signed by the current authority, the issuer, a pending authority, a
   random wallet, or an address nobody holds a key for;
+- blocks and unblocks with a reason (`block_wallet`, `unblock_wallet`) as well as without;
+- freezes and thaws with random reason codes and case references, mostly of the mint's token
+  accounts, sometimes of the other mint's account, the policy account or the mint itself, and
+  sometimes of an account already in that state;
+- the issuer (or someone else) handing the mint's freeze authority to Sentinel;
 - public transfers through Token-2022, by the owner or a delegate, including self-transfers,
   zero amounts, amounts at and above the limit, and more than the balance;
-- approvals of delegates;
+- approvals of delegates, which a frozen account refuses;
 - `Execute` sent straight to the hook with the accounts Token-2022 would pass, with a public
   amount or `u64::MAX` (what Token-2022 passes for a confidential transfer), and with made-up
   accounts;
@@ -54,18 +61,25 @@ Then random operations, each picked from:
 - **The outcome.** The model predicts success or failure, and for each Sentinel rule the exact
   error code (`RecipientNotAllowlisted`, `TransferExceedsLimit`, `SenderBlocked`,
   `RecipientBlocked`, `Unauthorized`, `ConfidentialAmountNotEnforceable`, `AuthorityBlocked`,
-  `InvalidAuthority`), in the order the program checks them.
+  `InvalidAuthority`, `FreezeAuthorityNotSentinel`), in the order the program checks them, and
+  Token-2022's `AccountFrozen` and `InvalidState` where those come first.
 - **The whole state.** The policy (mint, authority, rules), every allow and block entry, a pending
-  handover, every balance and delegation, the meta list's bytes (which only `initialize` and
-  `update_extra_account_meta_list` may change), and the total supply.
+  handover, every balance, delegation and frozen flag, the mint's freeze authority, the meta list's
+  bytes (which only `initialize` and `update_extra_account_meta_list` may change), and the total
+  supply.
+- **The record.** Every `EnforcementAction` event a successful step emitted, decoded from its logs
+  and compared field by field with what the model expects; a step that should emit none must emit
+  none.
 
 The model is the threat model's invariants written as code (`docs/threat-model.md`): fail closed,
 only the policy authority changes the rules, only the mint authority sets up and nobody can block
 that, a handover needs both sides, blocklist, allowlist, limit and confidential amounts, entries
-cannot be forged, and the hook holds no state.
+cannot be forged, the hook holds no state, only the policy authority freezes and only through the
+mint's own freeze address, and enforcement is recorded.
 
-It also models one Token-2022 behaviour worth knowing: a transfer whose source and destination are
-the same account returns before the hook is called.
+It also models the Token-2022 behaviour that decides outcomes here: a frozen source is refused
+first; a transfer whose source and destination are the same account then returns before the hook
+is called (a frozen account still refuses it); a frozen destination is refused after that.
 
 ## Does it catch bugs?
 
@@ -79,7 +93,7 @@ a rule switched off, an off-by-one), builds each broken program and runs these t
 python3 tests-fuzz/mutants.py          # from the repository root; about 10 s per mutant
 ```
 
-With the default run (64 cases, 14 October 2026), all 26 are caught:
+With the default run (64 cases, 15 October 2026), all 35 are caught:
 
 | Mutant | What it breaks | Result |
 |---|---|---|
@@ -109,10 +123,23 @@ With the default run (64 cases, 14 October 2026), all 26 are caught:
 | `update-policy-keeps-flag` | `update_policy` forgets to store the blocklist flag | caught |
 | `accept-keeps-old-authority` | `accept_authority` does not change the authority | caught |
 | `funded-address-blocks-setup` | the 2.1.0 bug: a funded meta-list address blocks setup | caught |
+| `freeze-anyone` | anyone can freeze and thaw | caught |
+| `freeze-authority-check-off` | Sentinel tries to freeze on a mint whose freeze authority is not its address (wrong error) | caught |
+| `thaw-freezes` | `thaw_token_account` freezes | caught |
+| `freeze-recorded-as-thaw` | a freeze is recorded as a thaw | caught |
+| `unblock-recorded-as-block` | an unblock is recorded as a block | caught |
+| `block-reason-dropped` | `block_wallet` records reason code 0 instead of the issuer's | caught |
+| `freeze-case-ref-dropped` | a freeze or thaw records an empty case reference | caught |
+| `freeze-event-wrong-wallet` | a freeze names the signer instead of the account's owner | caught |
+| `freeze-event-wrong-account` | a freeze names the mint instead of the token account | caught |
 
 A mutant that survives points to a gap in the model or in what the generator tries.
 `accept-wrong-rent-receiver` survived the first run, because the generator rarely named a wrong
-rent receiver when accepting a handover; it now does so more often.
+rent receiver when accepting a handover; it now does so more often. When 2.2 added freezes and
+thaws, the new operations made two rare paths rarer, and `accept-wrong-rent-receiver` and
+`any-block-entry-blocks` survived again. The generator now accepts a pending handover more often,
+starts some cases with one already proposed, and passes a blocklisted wallet's entry as the fifth
+account of a direct `Execute` more often.
 
 ## Coverage
 
@@ -126,14 +153,14 @@ cases, so it runs in chunks and keeps only the coverage files.
 bash tests-fuzz/coverage.sh       # from the repository root; about 10 minutes
 ```
 
-On 14 October 2026 (48 cases): **403 of the 421 lines of `lib.rs` that carry code were executed
-(95.7%).** The other 18:
+On 15 October 2026 (48 cases, 2.2.0): **487 of the 505 lines of `lib.rs` that carry code were
+executed (96.4%).** Every line added in 2.2 is among them. The other 18:
 
 | Lines | What | Why not here |
 |---|---|---|
-| 151–165 | `update_extra_account_meta_list` growing a list made before 2.1 | Every list made by 2.1 already has its full size. `scripts/upgrade-check.sh` covers it on a local validator: a 2.0.2 mint upgraded and migrated. |
-| 410, 423, 443, 456 | the `?` after `ExtraAccountMeta::new_with_seeds` | The seeds are constants; these calls cannot fail. |
-| 359, 372 | the `?` after the System transfer and `allocate` in `create_program_account` | The transfer fails only if the issuer cannot pay. A failing `allocate` does run (a second meta list), but the debug information does not attribute its exit to this line. |
-| 512 | `false` when an account's data cannot be borrowed | Nothing else holds the account inside the hook. |
+| 162–176 | `update_extra_account_meta_list` growing a list made before 2.1 | Every list made by 2.1 already has its full size. `scripts/upgrade-check.sh` covers it on a local validator: a 2.0.2 mint upgraded and migrated. |
+| 554, 567, 587, 600 | the `?` after `ExtraAccountMeta::new_with_seeds` | The seeds are constants; these calls cannot fail. |
+| 452, 465 | the `?` after the System transfer and `allocate` in `create_program_account` | The transfer fails only if the issuer cannot pay. A failing `allocate` does run (a second meta list), but the debug information does not attribute its exit to this line. |
+| 656 | `false` when an account's data cannot be borrowed | Nothing else holds the account inside the hook. |
 
 Line coverage counts lines, not paths; the fuzz tests' value is in the model they check against.

@@ -89,6 +89,29 @@ MUTANTS = [
     ("accept-keeps-old-authority", replace("policy.authority = ctx.accounts.new_authority.key();", "")),
     # Setup.
     ("funded-address-blocks-setup", replace("if current == 0 {", "if true {")),
+    # Freezing and the enforcement record (2.2).
+    ("freeze-anyone", drop_has_one("SetFrozen")),
+    ("freeze-authority-check-off", replace(
+        "constraint = mint.freeze_authority == COption::Some(freeze_authority.key())",
+        "constraint = true")),
+    ("thaw-freezes", replace("        set_frozen(&ctx, false)?;", "        set_frozen(&ctx, true)?;")),
+    ("freeze-recorded-as-thaw", replace(
+        "emit_frozen(&ctx, EnforcementKind::Freeze, reason_code, case_ref);",
+        "emit_frozen(&ctx, EnforcementKind::Thaw, reason_code, case_ref);")),
+    ("unblock-recorded-as-block", replace("            action: EnforcementKind::Unblock,",
+                                          "            action: EnforcementKind::Block,")),
+    ("block-reason-dropped", replace(
+        "            action: EnforcementKind::Block,\n            reason_code,\n",
+        "            action: EnforcementKind::Block,\n            reason_code: 0,\n")),
+    ("freeze-case-ref-dropped", replace(
+        "\n        case_ref,\n        authority: ctx.accounts.authority.key(),\n    });\n}",
+        "\n        case_ref: [0; 32],\n        authority: ctx.accounts.authority.key(),\n    });\n}")),
+    ("freeze-event-wrong-wallet", replace(
+        "        wallet: token_account_owner(&ctx.accounts.token_account),\n",
+        "        wallet: ctx.accounts.authority.key(),\n")),
+    ("freeze-event-wrong-account", replace(
+        "        token_account: ctx.accounts.token_account.key(),\n",
+        "        token_account: ctx.accounts.mint.key(),\n")),
 ]
 
 

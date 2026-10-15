@@ -37,6 +37,13 @@ pub mod code {
     pub const CONFIDENTIAL_AMOUNT_NOT_ENFORCEABLE: u32 = 6005;
     pub const AUTHORITY_BLOCKED: u32 = 6006;
     pub const INVALID_AUTHORITY: u32 = 6007;
+    pub const FREEZE_AUTHORITY_NOT_SENTINEL: u32 = 6008;
+}
+
+/// Token-2022's error codes that the model predicts (`TokenError`, by position).
+pub mod token_code {
+    pub const INVALID_STATE: u32 = 13;
+    pub const ACCOUNT_FROZEN: u32 = 17;
 }
 
 /// Path of a file next to this crate, overridable by an environment variable.
@@ -73,6 +80,9 @@ pub fn allow_pda(mint: &Pubkey, wallet: &Pubkey) -> Pubkey {
 }
 pub fn block_pda(mint: &Pubkey, wallet: &Pubkey) -> Pubkey {
     pda(&[b"block", mint.as_ref(), wallet.as_ref()])
+}
+pub fn freeze_authority_pda(mint: &Pubkey) -> Pubkey {
+    pda(&[b"freeze-authority", mint.as_ref()])
 }
 
 /// The first 8 bytes of sha256(`preimage`).
@@ -120,6 +130,41 @@ impl Rules {
         v.push(self.allow_confidential as u8);
         v
     }
+}
+
+/// The issuer's reason for an enforcement action: `reason_code` and `case_ref`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Reason {
+    pub code: u16,
+    pub case_ref: [u8; 32],
+}
+
+impl Reason {
+    fn args(&self) -> Vec<u8> {
+        let mut v = self.code.to_le_bytes().to_vec();
+        v.extend_from_slice(&self.case_ref);
+        v
+    }
+}
+
+/// `EnforcementKind` in the program, in its order.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Action {
+    Block,
+    Unblock,
+    Freeze,
+    Thaw,
+}
+
+/// A decoded `EnforcementAction` event.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Enforcement {
+    pub mint: Pubkey,
+    pub wallet: Pubkey,
+    pub token_account: Pubkey,
+    pub action: Action,
+    pub reason: Reason,
+    pub authority: Pubkey,
 }
 
 pub mod ix {
@@ -206,6 +251,56 @@ pub mod ix {
             ],
         )
     }
+    /// `block_wallet` / `unblock_wallet`: the list instructions with a recorded reason.
+    pub fn block_with_reason(
+        block: bool,
+        authority: Pubkey,
+        mint: Pubkey,
+        wallet: Pubkey,
+        reason: Reason,
+    ) -> Instruction {
+        let mut ix = if block {
+            add_to_list(true, authority, mint, wallet)
+        } else {
+            remove_from_list(true, authority, mint, wallet)
+        };
+        let name = if block {
+            "block_wallet"
+        } else {
+            "unblock_wallet"
+        };
+        ix.data = discriminator(&format!("global:{name}")).to_vec();
+        ix.data.extend_from_slice(&reason.args());
+        ix
+    }
+
+    /// `freeze_token_account` (`freeze`) or `thaw_token_account`.
+    pub fn set_frozen(
+        freeze: bool,
+        authority: Pubkey,
+        mint: Pubkey,
+        token_account: Pubkey,
+        reason: Reason,
+    ) -> Instruction {
+        let name = if freeze {
+            "freeze_token_account"
+        } else {
+            "thaw_token_account"
+        };
+        anchor_ix(
+            name,
+            &reason.args(),
+            vec![
+                rs(authority),
+                r(mint),
+                r(policy_pda(&mint)),
+                w(token_account),
+                r(freeze_authority_pda(&mint)),
+                r(TOKEN_2022_ID),
+            ],
+        )
+    }
+
     pub fn propose_authority(
         authority: Pubkey,
         mint: Pubkey,
@@ -347,6 +442,16 @@ pub fn send(
     signers: &[&Keypair],
     ixs: &[Instruction],
 ) -> Result<(), FailedTransactionMetadata> {
+    send_logs(svm, payer, signers, ixs).map(|_| ())
+}
+
+/// `send`, returning the program logs of a successful transaction.
+pub fn send_logs(
+    svm: &mut LiteSVM,
+    payer: &Keypair,
+    signers: &[&Keypair],
+    ixs: &[Instruction],
+) -> Result<Vec<String>, FailedTransactionMetadata> {
     svm.expire_blockhash();
     let mut tx = Transaction::new_unsigned(Message::new(ixs, Some(&payer.pubkey())));
     let required = &tx.message.account_keys[..tx.message.header.num_required_signatures as usize];
@@ -358,7 +463,59 @@ pub fn send(
     }
     tx.try_partial_sign(&keys, svm.latest_blockhash())
         .expect("sign");
-    svm.send_transaction(tx).map(|_| ())
+    svm.send_transaction(tx).map(|meta| meta.logs)
+}
+
+/// Standard base64 (with padding), enough for Anchor's `Program data:` logs.
+fn base64_decode(text: &str) -> Option<Vec<u8>> {
+    const ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = Vec::new();
+    let (mut bits, mut n) = (0u32, 0);
+    for c in text.trim_end_matches('=').bytes() {
+        bits = (bits << 6) | ALPHABET.iter().position(|&a| a == c)? as u32;
+        n += 6;
+        if n >= 8 {
+            n -= 8;
+            out.push((bits >> n) as u8);
+        }
+    }
+    Some(out)
+}
+
+/// Every `EnforcementAction` event in `logs`, in order.
+pub fn enforcement_events(logs: &[String]) -> Vec<Enforcement> {
+    let tag = discriminator("event:EnforcementAction");
+    let mut events = Vec::new();
+    for line in logs {
+        let Some(data) = line.strip_prefix("Program data: ").and_then(base64_decode) else {
+            continue;
+        };
+        if data.len() < 8 || data[..8] != tag {
+            continue;
+        }
+        let d = &data[8..];
+        assert_eq!(d.len(), 32 * 4 + 1 + 2 + 32, "EnforcementAction size");
+        let key = |at: usize| Pubkey::new_from_array(d[at..at + 32].try_into().unwrap());
+        let action = match d[96] {
+            0 => Action::Block,
+            1 => Action::Unblock,
+            2 => Action::Freeze,
+            3 => Action::Thaw,
+            other => panic!("unknown EnforcementKind {other}"),
+        };
+        events.push(Enforcement {
+            mint: key(0),
+            wallet: key(32),
+            token_account: key(64),
+            action,
+            reason: Reason {
+                code: u16::from_le_bytes([d[97], d[98]]),
+                case_ref: d[99..131].try_into().unwrap(),
+            },
+            authority: key(131),
+        });
+    }
+    events
 }
 
 /// The custom error code of a failed transaction, if it has one.
@@ -373,9 +530,14 @@ pub fn fund(svm: &mut LiteSVM, key: &Pubkey, lamports: u64) {
     svm.airdrop(key, lamports).expect("airdrop");
 }
 
-/// A mint (decimals 0) whose transfer hook is Sentinel and whose mint authority is `issuer`.
-pub fn create_hooked_mint(svm: &mut LiteSVM, issuer: &Keypair) -> Keypair {
-    let mint = Keypair::new();
+/// A mint (decimals 0) whose transfer hook is Sentinel, whose mint authority is `issuer`, and whose
+/// freeze authority is `freeze_authority`.
+pub fn create_hooked_mint(
+    svm: &mut LiteSVM,
+    issuer: &Keypair,
+    mint: Keypair,
+    freeze_authority: Option<&Pubkey>,
+) -> Keypair {
     let len =
         ExtensionType::try_calculate_account_len::<Mint>(&[ExtensionType::TransferHook]).unwrap();
     let rent = svm.minimum_balance_for_rent_exemption(len);
@@ -397,7 +559,7 @@ pub fn create_hooked_mint(svm: &mut LiteSVM, issuer: &Keypair) -> Keypair {
         &TOKEN_2022_ID,
         &mint.pubkey(),
         &issuer.pubkey(),
-        None,
+        freeze_authority,
         0,
     )
     .unwrap();
@@ -451,27 +613,38 @@ pub fn mint_to(svm: &mut LiteSVM, issuer: &Keypair, mint: &Pubkey, account: &Pub
     send(svm, issuer, &[], &[ix]).expect("mint_to");
 }
 
-pub fn approve(
-    svm: &mut LiteSVM,
-    payer: &Keypair,
-    owner: &Keypair,
+/// Token-2022 `ApproveChecked` (decimals 0).
+pub fn approve_ix(
+    owner: &Pubkey,
     mint: &Pubkey,
     account: &Pubkey,
     delegate: &Pubkey,
     amount: u64,
-) {
-    let ix = spl_token_2022_interface::instruction::approve_checked(
+) -> Instruction {
+    spl_token_2022_interface::instruction::approve_checked(
         &TOKEN_2022_ID,
         account,
         mint,
         delegate,
-        &owner.pubkey(),
+        owner,
         &[],
         amount,
         0,
     )
-    .unwrap();
-    send(svm, payer, &[owner], &[ix]).expect("approve");
+    .unwrap()
+}
+
+/// Token-2022 `SetAuthority` naming `new` as the mint's freeze authority, signed by `current`.
+pub fn set_freeze_authority_ix(mint: &Pubkey, current: &Pubkey, new: &Pubkey) -> Instruction {
+    spl_token_2022_interface::instruction::set_authority(
+        &TOKEN_2022_ID,
+        mint,
+        Some(new),
+        spl_token_2022_interface::instruction::AuthorityType::FreezeAccount,
+        current,
+        &[],
+    )
+    .unwrap()
 }
 
 /// Balance, delegate and delegated amount of a token account.
@@ -485,6 +658,18 @@ pub fn token_state(svm: &LiteSVM, account: &Pubkey) -> (u64, Option<Pubkey>, u64
     };
     let delegated = u64::from_le_bytes(data[121..129].try_into().unwrap());
     (amount, delegate, delegated)
+}
+
+/// Whether a token account is frozen (`AccountState::Frozen` in its `state` byte).
+pub fn is_frozen(svm: &LiteSVM, account: &Pubkey) -> bool {
+    svm.get_account(account).expect("token account").data[108] == 2
+}
+
+/// The mint's freeze authority.
+pub fn freeze_authority_of(svm: &LiteSVM, mint: &Pubkey) -> Option<Pubkey> {
+    let data = svm.get_account(mint).expect("mint").data;
+    (u32::from_le_bytes(data[46..50].try_into().unwrap()) == 1)
+        .then(|| Pubkey::new_from_array(data[50..82].try_into().unwrap()))
 }
 
 /// An account owned by Sentinel with data, i.e. a live PDA.
