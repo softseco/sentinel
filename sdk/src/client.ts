@@ -10,17 +10,29 @@ import {
   sendAndConfirmTransaction,
 } from "@solana/web3.js";
 import {
+  AuthorityType,
   ExtensionType,
   TOKEN_2022_PROGRAM_ID,
   createInitializeMintInstruction,
   createInitializeTransferHookInstruction,
+  createSetAuthorityInstruction,
   createTransferCheckedWithTransferHookInstruction,
+  getAccount,
   getAssociatedTokenAddressSync,
   getMintLen,
+  unpackAccount,
 } from "@solana/spl-token";
+import { sha256 } from "@noble/hashes/sha2";
 import idl from "./idl/sentinel.json";
 import type { Sentinel } from "./idl/sentinel";
-import { allowEntryPda, blockEntryPda, metaListPda, pendingAuthorityPda, policyPda } from "./pdas";
+import {
+  allowEntryPda,
+  blockEntryPda,
+  freezeAuthorityPda,
+  metaListPda,
+  pendingAuthorityPda,
+  policyPda,
+} from "./pdas";
 
 const CONFIRM = { commitment: "confirmed" as const };
 
@@ -29,6 +41,53 @@ const CONFIRM = { commitment: "confirmed" as const };
  * or closes an account, so this stays well inside the transaction size and compute limits.
  */
 export const MAX_LIST_UPDATES_PER_TX = 8;
+
+/** How many freezes or thaws the wallet helpers put in one transaction. */
+export const MAX_FREEZES_PER_TX = 8;
+
+/**
+ * Why a wallet was blocked or unblocked, or a token account frozen or thawed. Sentinel does not
+ * interpret either field; both go into the `enforcementAction` event.
+ *
+ * - `reasonCode`: the issuer's own code, 0 to 65535. `ENFORCEMENT_REASONS` is a suggested set.
+ * - `caseRef`: 32 bytes pointing to the issuer's case file. Use `caseRef(caseId, salt)`, so the
+ *   chain holds a hash and no personal data, and only someone with the salt can match it.
+ */
+export interface Enforcement {
+  reasonCode: number;
+  caseRef: Uint8Array | number[];
+}
+
+/** A suggested set of reason codes. Issuers may use their own; Sentinel only records the number. */
+export const ENFORCEMENT_REASONS = {
+  unspecified: 0,
+  sanctions: 1,
+  courtOrder: 2,
+  authorityRequest: 3,
+  fraud: 4,
+  stolenFunds: 5,
+  internalReview: 6,
+  /** For an unblock or a thaw: the case is closed. */
+  caseClosed: 7,
+} as const;
+
+/**
+ * A 32-byte case reference for `Enforcement.caseRef`: SHA-256 of `salt` followed by `caseId`.
+ * Keep the salt private: with it, the issuer (or its supervisor) can show which case an on-chain
+ * action belongs to; without it, nobody can guess the case number from the hash.
+ */
+export function caseRef(caseId: string, salt: string | Uint8Array): Uint8Array {
+  const saltBytes = typeof salt === "string" ? Buffer.from(salt, "utf8") : Buffer.from(salt);
+  return sha256(Buffer.concat([saltBytes, Buffer.from(caseId, "utf8")]));
+}
+
+/** A token account of a mint and whether it is frozen. */
+export interface TokenAccountView {
+  address: PublicKey;
+  owner: PublicKey;
+  amount: bigint;
+  frozen: boolean;
+}
 
 /**
  * An event emitted by the program, decoded from transaction logs. `name` is camelCase, for
@@ -88,6 +147,10 @@ export class SentinelClient {
   pendingAuthority(mint: PublicKey): PublicKey {
     return pendingAuthorityPda(mint, this.programId);
   }
+  /** Sentinel's freeze-authority address for `mint` (2.2). */
+  freezeAuthority(mint: PublicKey): PublicKey {
+    return freezeAuthorityPda(mint, this.programId);
+  }
 
   private get connection() {
     return this.provider.connection;
@@ -96,13 +159,24 @@ export class SentinelClient {
     return (this.provider.wallet as unknown as { payer: Signer }).payer;
   }
 
-  /** Create a Token-2022 mint whose transfer hook is Sentinel. Signs with `mint`. */
+  /**
+   * Create a Token-2022 mint whose transfer hook is Sentinel. Signs with `mint`.
+   *
+   * `freezeAuthority: "sentinel"` names Sentinel's freeze-authority address, so the policy
+   * authority can freeze and thaw token accounts through Sentinel. The default is no freeze
+   * authority, as before 2.2; a freeze authority cannot be added to a mint created without one.
+   */
   async createCompliantMint(params: {
     mint: Keypair;
     decimals: number;
     mintAuthority?: PublicKey;
+    freezeAuthority?: PublicKey | "sentinel" | null;
   }): Promise<PublicKey> {
     const authority = params.mintAuthority ?? this.payer.publicKey;
+    const freezeAuthority =
+      params.freezeAuthority === "sentinel"
+        ? this.freezeAuthority(params.mint.publicKey)
+        : (params.freezeAuthority ?? null);
     const mintLen = getMintLen([ExtensionType.TransferHook]);
     const lamports = await this.connection.getMinimumBalanceForRentExemption(mintLen);
     const tx = new Transaction().add(
@@ -123,7 +197,7 @@ export class SentinelClient {
         params.mint.publicKey,
         params.decimals,
         authority,
-        null,
+        freezeAuthority,
         TOKEN_2022_PROGRAM_ID
       )
     );
@@ -379,6 +453,177 @@ export class SentinelClient {
       .instruction();
   }
 
+  /** `block_wallet` (`add_to_blocklist` that records why), signed by `authority`. */
+  blockWalletInstruction(params: {
+    mint: PublicKey;
+    wallet: PublicKey;
+    enforcement: Enforcement;
+    authority?: PublicKey;
+  }): Promise<TransactionInstruction> {
+    const { mint, wallet } = params;
+    const [reasonCode, ref] = enforcementArgs(params.enforcement);
+    return this.program.methods
+      .blockWallet(reasonCode, ref)
+      .accountsPartial({
+        authority: params.authority ?? this.payer.publicKey,
+        mint,
+        policyConfig: this.policy(mint),
+        wallet,
+        blockEntry: this.blockEntry(mint, wallet),
+        systemProgram: SystemProgram.programId,
+      })
+      .instruction();
+  }
+
+  /** `unblock_wallet` (`remove_from_blocklist` that records why), signed by `authority`. */
+  unblockWalletInstruction(params: {
+    mint: PublicKey;
+    wallet: PublicKey;
+    enforcement: Enforcement;
+    authority?: PublicKey;
+  }): Promise<TransactionInstruction> {
+    const { mint, wallet } = params;
+    const [reasonCode, ref] = enforcementArgs(params.enforcement);
+    return this.program.methods
+      .unblockWallet(reasonCode, ref)
+      .accountsPartial({
+        authority: params.authority ?? this.payer.publicKey,
+        mint,
+        policyConfig: this.policy(mint),
+        wallet,
+        blockEntry: this.blockEntry(mint, wallet),
+      })
+      .instruction();
+  }
+
+  /** `freeze_token_account` or `thaw_token_account` for one token account, signed by `authority`. */
+  freezeInstruction(params: {
+    mint: PublicKey;
+    tokenAccount: PublicKey;
+    enforcement: Enforcement;
+    thaw?: boolean;
+    authority?: PublicKey;
+  }): Promise<TransactionInstruction> {
+    const { mint } = params;
+    const [reasonCode, ref] = enforcementArgs(params.enforcement);
+    const accounts = {
+      authority: params.authority ?? this.payer.publicKey,
+      mint,
+      policyConfig: this.policy(mint),
+      tokenAccount: params.tokenAccount,
+      freezeAuthority: this.freezeAuthority(mint),
+      tokenProgram: TOKEN_2022_PROGRAM_ID,
+    };
+    return params.thaw
+      ? this.program.methods.thawTokenAccount(reasonCode, ref).accountsPartial(accounts).instruction()
+      : this.program.methods.freezeTokenAccount(reasonCode, ref).accountsPartial(accounts).instruction();
+  }
+
+  // ---- Enforcement (provider wallet as the policy authority) ----
+
+  /** Blocklist `wallet`, recording why. */
+  async blockWallet(mint: PublicKey, wallet: PublicKey, enforcement: Enforcement): Promise<string> {
+    return this.send([await this.blockWalletInstruction({ mint, wallet, enforcement })]);
+  }
+
+  /** Remove `wallet` from the blocklist, recording why. */
+  async unblockWallet(mint: PublicKey, wallet: PublicKey, enforcement: Enforcement): Promise<string> {
+    return this.send([await this.unblockWalletInstruction({ mint, wallet, enforcement })]);
+  }
+
+  /** Freeze one token account. The mint's freeze authority must be `freezeAuthority(mint)`. */
+  async freezeTokenAccount(mint: PublicKey, tokenAccount: PublicKey, enforcement: Enforcement): Promise<string> {
+    return this.send([await this.freezeInstruction({ mint, tokenAccount, enforcement })]);
+  }
+
+  /** Thaw one token account. */
+  async thawTokenAccount(mint: PublicKey, tokenAccount: PublicKey, enforcement: Enforcement): Promise<string> {
+    return this.send([await this.freezeInstruction({ mint, tokenAccount, enforcement, thaw: true })]);
+  }
+
+  /**
+   * Freeze every token account of `mint` that `owner` holds and that is not frozen yet, in
+   * batches of `MAX_FREEZES_PER_TX`. A wallet can hold several accounts of one mint; the
+   * blocklist covers the wallet, but freezing is per account. Returns the signatures.
+   */
+  async freezeWallet(mint: PublicKey, owner: PublicKey, enforcement: Enforcement): Promise<string[]> {
+    const accounts = (await this.tokenAccountsOf(mint, owner)).filter((a) => !a.frozen);
+    return this.freezeBatch(mint, accounts.map((a) => a.address), enforcement, false);
+  }
+
+  /** Thaw every frozen token account of `mint` that `owner` holds. */
+  async thawWallet(mint: PublicKey, owner: PublicKey, enforcement: Enforcement): Promise<string[]> {
+    const accounts = (await this.tokenAccountsOf(mint, owner)).filter((a) => a.frozen);
+    return this.freezeBatch(mint, accounts.map((a) => a.address), enforcement, true);
+  }
+
+  /**
+   * Blocklist `wallet` and freeze its token accounts of `mint`. The block and the first
+   * `MAX_FREEZES_PER_TX - 1` freezes go in one transaction, so the wallet is never blocked
+   * without its first accounts frozen too. Fails if the wallet is already blocklisted; use
+   * `freezeWallet` then. Returns the signatures.
+   */
+  async blockAndFreezeWallet(mint: PublicKey, wallet: PublicKey, enforcement: Enforcement): Promise<string[]> {
+    const accounts = (await this.tokenAccountsOf(mint, wallet)).filter((a) => !a.frozen).map((a) => a.address);
+    const first = accounts.slice(0, MAX_FREEZES_PER_TX - 1);
+    const ixs = [
+      await this.blockWalletInstruction({ mint, wallet, enforcement }),
+      ...(await Promise.all(first.map((tokenAccount) => this.freezeInstruction({ mint, tokenAccount, enforcement })))),
+    ];
+    const signatures = [await this.send(ixs)];
+    signatures.push(...(await this.freezeBatch(mint, accounts.slice(first.length), enforcement, false)));
+    return signatures;
+  }
+
+  /**
+   * Hand the mint's freeze authority to Sentinel, so the policy authority can freeze and thaw
+   * through it. `currentFreezeAuthority` must sign. Works only on a mint that has a freeze
+   * authority; one created without can never get one.
+   */
+  setSentinelAsFreezeAuthority(mint: PublicKey, currentFreezeAuthority: Signer): Promise<string> {
+    const ix = createSetAuthorityInstruction(
+      mint,
+      currentFreezeAuthority.publicKey,
+      AuthorityType.FreezeAccount,
+      this.freezeAuthority(mint),
+      [],
+      TOKEN_2022_PROGRAM_ID,
+    );
+    const extra = currentFreezeAuthority.publicKey.equals(this.payer.publicKey) ? [] : [currentFreezeAuthority];
+    return this.send([ix], extra);
+  }
+
+  /** Every token account of `mint` held by `owner`, with its state. */
+  async tokenAccountsOf(mint: PublicKey, owner: PublicKey): Promise<TokenAccountView[]> {
+    const { value } = await this.connection.getTokenAccountsByOwner(owner, { mint }, "confirmed");
+    return value.map(({ pubkey, account }) => {
+      const parsed = unpackAccount(pubkey, account, TOKEN_2022_PROGRAM_ID);
+      return { address: pubkey, owner: parsed.owner, amount: parsed.amount, frozen: parsed.isFrozen };
+    });
+  }
+
+  /** Whether a token account is frozen. */
+  async isFrozen(tokenAccount: PublicKey): Promise<boolean> {
+    return (await getAccount(this.connection, tokenAccount, "confirmed", TOKEN_2022_PROGRAM_ID)).isFrozen;
+  }
+
+  private async freezeBatch(
+    mint: PublicKey,
+    tokenAccounts: PublicKey[],
+    enforcement: Enforcement,
+    thaw: boolean,
+  ): Promise<string[]> {
+    const signatures: string[] = [];
+    for (let i = 0; i < tokenAccounts.length; i += MAX_FREEZES_PER_TX) {
+      const chunk = tokenAccounts.slice(i, i + MAX_FREEZES_PER_TX);
+      const ixs = await Promise.all(
+        chunk.map((tokenAccount) => this.freezeInstruction({ mint, tokenAccount, enforcement, thaw })),
+      );
+      signatures.push(await this.send(ixs));
+    }
+    return signatures;
+  }
+
   // ---- Authority handover (provider wallet as the current authority) ----
 
   /** Propose `newAuthority` as the policy authority. Nothing changes until it accepts. */
@@ -539,4 +784,14 @@ export class SentinelClient {
   async isBlocklisted(mint: PublicKey, wallet: PublicKey): Promise<boolean> {
     return (await this.program.account.blockEntry.fetchNullable(this.blockEntry(mint, wallet))) !== null;
   }
+}
+
+/** The program's arguments for an `Enforcement`, checked. */
+function enforcementArgs(e: Enforcement): [number, number[]] {
+  if (!Number.isInteger(e.reasonCode) || e.reasonCode < 0 || e.reasonCode > 0xffff) {
+    throw new Error(`reasonCode must be an integer from 0 to 65535, got ${e.reasonCode}`);
+  }
+  const ref = Array.from(e.caseRef);
+  if (ref.length !== 32) throw new Error(`caseRef must be 32 bytes, got ${ref.length}`);
+  return [e.reasonCode, ref];
 }

@@ -6,6 +6,7 @@ export const POLICY_SEED = Buffer.from("policy");
 export const ALLOW_SEED = Buffer.from("allow");
 export const BLOCK_SEED = Buffer.from("block");
 export const PENDING_AUTHORITY_SEED = Buffer.from("pending-authority");
+export const FREEZE_AUTHORITY_SEED = Buffer.from("freeze-authority");
 
 /** PDA that stores a mint's ExtraAccountMetaList (`["extra-account-metas", mint]`). */
 export const metaListPda = (mint: PublicKey, programId: PublicKey): PublicKey =>
@@ -26,3 +27,10 @@ export const blockEntryPda = (mint: PublicKey, wallet: PublicKey, programId: Pub
 /** A mint's pending authority handover (`["pending-authority", mint]`), present between propose and accept. */
 export const pendingAuthorityPda = (mint: PublicKey, programId: PublicKey): PublicKey =>
   PublicKey.findProgramAddressSync([PENDING_AUTHORITY_SEED, mint.toBuffer()], programId)[0];
+
+/**
+ * Sentinel's freeze-authority address for a mint (`["freeze-authority", mint]`). A mint that names
+ * it as its freeze authority can have its token accounts frozen and thawed through Sentinel (2.2).
+ */
+export const freezeAuthorityPda = (mint: PublicKey, programId: PublicKey): PublicKey =>
+  PublicKey.findProgramAddressSync([FREEZE_AUTHORITY_SEED, mint.toBuffer()], programId)[0];

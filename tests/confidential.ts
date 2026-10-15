@@ -42,7 +42,6 @@ import {
   createTransactionMessage,
   generateKeyPairSigner,
   lamports,
-  none,
   pipe,
   sendAndConfirmTransactionFactory,
   setTransactionMessageFeePayerSigner,
@@ -106,6 +105,7 @@ describe("sentinel — real confidential transfers", function () {
     pda([Buffer.from("allow"), mintKey().toBuffer(), new PublicKey(w).toBuffer()]);
   const blockEntryPda = (w: Address) =>
     pda([Buffer.from("block"), mintKey().toBuffer(), new PublicKey(w).toBuffer()]);
+  const freezeAuthorityPda = () => pda([Buffer.from("freeze-authority"), mintKey().toBuffer()]);
   const ataOf = (owner: Address) =>
     getAssociatedTokenAddressSync(mintKey(), new PublicKey(owner), true, TOKEN_2022_PROGRAM_ID);
 
@@ -223,7 +223,7 @@ describe("sentinel — real confidential transfers", function () {
     auditorElgamalPubkey = getAuditorElgamalPubkey(await deriveAuditorElgamalKeypair(auditorWallet));
   });
 
-  it("creates a mint with confidential transfers, an auditor, and Sentinel as its transfer hook", async () => {
+  it("creates a mint with confidential transfers, an auditor, and Sentinel as its transfer hook and freeze authority", async () => {
     const extensions = [
       extension("TransferHook", {
         authority: authority.address,
@@ -260,7 +260,7 @@ describe("sentinel — real confidential transfers", function () {
         mint: mint.address,
         decimals,
         mintAuthority: authority.address,
-        freezeAuthority: none(),
+        freezeAuthority: some(address(freezeAuthorityPda().toBase58())),
       }),
     ]);
   });
@@ -404,10 +404,38 @@ describe("sentinel — real confidential transfers", function () {
     await confidentialTransfer(alice, bob, 10n);
   });
 
+  it("stops a confidential transfer to a frozen account, and lets it through after a thaw", async () => {
+    // Freezing is Token-2022's own check, made before the hook runs, so the refusal comes from
+    // Token-2022 (AccountFrozen, 0x11) and Sentinel is never called.
+    const freezeAccounts = {
+      authority: payer.publicKey,
+      mint: mintKey(),
+      policyConfig: policyPda(),
+      tokenAccount: ataOf(bob.address),
+      freezeAuthority: freezeAuthorityPda(),
+      tokenProgram: TOKEN_2022_PROGRAM_ID,
+    };
+    const caseRef = Array.from({ length: 32 }, (_, i) => i);
+    await program.methods.freezeTokenAccount(4, caseRef).accountsPartial(freezeAccounts).rpc(CONFIRM);
+
+    let message: string | undefined;
+    try {
+      await confidentialTransfer(alice, bob, 10n);
+    } catch (e) {
+      message = String((e as Error).message ?? e);
+    }
+    if (message === undefined) assert.fail("a confidential transfer reached a frozen account");
+    assert.match(message, /0x11|frozen/i);
+    assert.notInclude(message, `Program ${program.programId.toBase58()} invoke [2]`);
+
+    await program.methods.thawTokenAccount(7, caseRef).accountsPartial(freezeAccounts).rpc(CONFIRM);
+    await confidentialTransfer(alice, bob, 10n);
+  });
+
   it("leaves the balances consistent with the transfers that went through", async () => {
     await applyPendingBalance({ rpc, rpcSubscriptions, payer: bob, owner: bob, mint: mint.address });
-    // 250 + 1500 + 10 + 10 reached Bob; every refused transfer left Alice's balance untouched.
-    assert.equal(await decryptBalance({ rpc, owner: bob, mint: mint.address }), 1_770n);
-    assert.equal(await decryptBalance({ rpc, owner: alice, mint: mint.address }), 5_000n - 1_770n);
+    // 250 + 1500 + 10 + 10 + 10 reached Bob; every refused transfer left Alice's balance untouched.
+    assert.equal(await decryptBalance({ rpc, owner: bob, mint: mint.address }), 1_780n);
+    assert.equal(await decryptBalance({ rpc, owner: alice, mint: mint.address }), 5_000n - 1_780n);
   });
 });

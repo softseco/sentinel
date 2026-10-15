@@ -1,6 +1,6 @@
 {
   "name": "@softseco/sentinel",
-  "version": "2.1.1",
+  "version": "2.2.0",
   "description": "TypeScript SDK for Sentinel — programmable compliance for Token-2022 tokenized assets (Transfer Hooks).",
   "keywords": [
     "solana",
@@ -54,6 +54,7 @@
   },
   "dependencies": {
     "@coral-xyz/anchor": "^0.31.0",
+    "@noble/hashes": "^1.8.0",
     "@solana/spl-token": "^0.4.9",
     "@solana/web3.js": "^1.98.0"
   },

@@ -8,7 +8,7 @@ export type Sentinel = {
   "address": "5fH1jj6XeZC96jPCxKiSb2onAXcs7f4rMeqMmSsP6puD",
   "metadata": {
     "name": "sentinel",
-    "version": "2.1.1",
+    "version": "2.2.0",
     "spec": "0.1.0",
     "description": "Programmable compliance for Token-2022 tokenized assets, built on Transfer Hooks."
   },
@@ -271,6 +271,106 @@ export type Sentinel = {
       "args": []
     },
     {
+      "name": "blockWallet",
+      "docs": [
+        "`add_to_blocklist`, recording why: also emits `EnforcementAction` with the issuer's",
+        "`reason_code` and `case_ref` (for example a salted hash of its case number)."
+      ],
+      "discriminator": [
+        132,
+        75,
+        123,
+        1,
+        97,
+        186,
+        159,
+        194
+      ],
+      "accounts": [
+        {
+          "name": "authority",
+          "writable": true,
+          "signer": true,
+          "relations": [
+            "policyConfig"
+          ]
+        },
+        {
+          "name": "mint"
+        },
+        {
+          "name": "policyConfig",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  111,
+                  108,
+                  105,
+                  99,
+                  121
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "wallet"
+        },
+        {
+          "name": "blockEntry",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  98,
+                  108,
+                  111,
+                  99,
+                  107
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              },
+              {
+                "kind": "account",
+                "path": "wallet"
+              }
+            ]
+          }
+        },
+        {
+          "name": "systemProgram",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "reasonCode",
+          "type": "u16"
+        },
+        {
+          "name": "caseRef",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        }
+      ]
+    },
+    {
       "name": "cancelAuthorityTransfer",
       "docs": [
         "Withdraw a pending proposal. Only the current authority may call this."
@@ -355,6 +455,117 @@ export type Sentinel = {
         }
       ],
       "args": []
+    },
+    {
+      "name": "freezeTokenAccount",
+      "docs": [
+        "Freeze one token account of the mint: Token-2022 then refuses every instruction on it",
+        "(transfers in and out, burns, approvals, confidential deposits, transfers and withdrawals)",
+        "until it is thawed. Only the policy authority may call this, and only for a mint whose",
+        "freeze authority is Sentinel's freeze-authority address for that mint."
+      ],
+      "discriminator": [
+        138,
+        168,
+        178,
+        109,
+        205,
+        224,
+        209,
+        93
+      ],
+      "accounts": [
+        {
+          "name": "authority",
+          "signer": true,
+          "relations": [
+            "policyConfig"
+          ]
+        },
+        {
+          "name": "mint"
+        },
+        {
+          "name": "policyConfig",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  111,
+                  108,
+                  105,
+                  99,
+                  121
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "tokenAccount",
+          "docs": [
+            "program, mint, current state); Sentinel only reads its owner for the event."
+          ],
+          "writable": true
+        },
+        {
+          "name": "freezeAuthority",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  102,
+                  114,
+                  101,
+                  101,
+                  122,
+                  101,
+                  45,
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "tokenProgram",
+          "address": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
+        }
+      ],
+      "args": [
+        {
+          "name": "reasonCode",
+          "type": "u16"
+        },
+        {
+          "name": "caseRef",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        }
+      ]
     },
     {
       "name": "initializeExtraAccountMetaList",
@@ -756,6 +967,115 @@ export type Sentinel = {
       "args": []
     },
     {
+      "name": "thawTokenAccount",
+      "docs": [
+        "Thaw a token account frozen with `freeze_token_account` (or by any earlier holder of the",
+        "mint's freeze authority). Same rules as freezing."
+      ],
+      "discriminator": [
+        199,
+        172,
+        96,
+        93,
+        244,
+        252,
+        137,
+        171
+      ],
+      "accounts": [
+        {
+          "name": "authority",
+          "signer": true,
+          "relations": [
+            "policyConfig"
+          ]
+        },
+        {
+          "name": "mint"
+        },
+        {
+          "name": "policyConfig",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  111,
+                  108,
+                  105,
+                  99,
+                  121
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "tokenAccount",
+          "docs": [
+            "program, mint, current state); Sentinel only reads its owner for the event."
+          ],
+          "writable": true
+        },
+        {
+          "name": "freezeAuthority",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  102,
+                  114,
+                  101,
+                  101,
+                  122,
+                  101,
+                  45,
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "tokenProgram",
+          "address": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
+        }
+      ],
+      "args": [
+        {
+          "name": "reasonCode",
+          "type": "u16"
+        },
+        {
+          "name": "caseRef",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        }
+      ]
+    },
+    {
       "name": "transferHook",
       "docs": [
         "Invoked by Token-2022 on every transfer. Enforces the mint's policy.",
@@ -857,6 +1177,101 @@ export type Sentinel = {
         {
           "name": "amount",
           "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "unblockWallet",
+      "docs": [
+        "`remove_from_blocklist`, recording why (`EnforcementAction`)."
+      ],
+      "discriminator": [
+        123,
+        52,
+        119,
+        61,
+        139,
+        43,
+        126,
+        73
+      ],
+      "accounts": [
+        {
+          "name": "authority",
+          "writable": true,
+          "signer": true,
+          "relations": [
+            "policyConfig"
+          ]
+        },
+        {
+          "name": "mint"
+        },
+        {
+          "name": "policyConfig",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  111,
+                  108,
+                  105,
+                  99,
+                  121
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "wallet"
+        },
+        {
+          "name": "blockEntry",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  98,
+                  108,
+                  111,
+                  99,
+                  107
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              },
+              {
+                "kind": "account",
+                "path": "wallet"
+              }
+            ]
+          }
+        }
+      ],
+      "args": [
+        {
+          "name": "reasonCode",
+          "type": "u16"
+        },
+        {
+          "name": "caseRef",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
         }
       ]
     },
@@ -1120,6 +1535,19 @@ export type Sentinel = {
       ]
     },
     {
+      "name": "enforcementAction",
+      "discriminator": [
+        20,
+        159,
+        238,
+        27,
+        33,
+        176,
+        40,
+        223
+      ]
+    },
+    {
       "name": "listEntryAdded",
       "discriminator": [
         254,
@@ -1238,6 +1666,11 @@ export type Sentinel = {
       "code": 6007,
       "name": "invalidAuthority",
       "msg": "The new authority must be a real address and differ from the current one"
+    },
+    {
+      "code": 6008,
+      "name": "freezeAuthorityNotSentinel",
+      "msg": "The mint's freeze authority is not Sentinel's freeze-authority address for this mint"
     }
   ],
   "types": [
@@ -1343,6 +1776,86 @@ export type Sentinel = {
           {
             "name": "bump",
             "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "enforcementAction",
+      "docs": [
+        "Emitted by `block_wallet`, `unblock_wallet`, `freeze_token_account` and `thaw_token_account`:",
+        "what was done, to whom, and the issuer's reason. Sentinel does not interpret `reason_code`;",
+        "`case_ref` points to the issuer's own case file (for example a salted hash of its case number),",
+        "so no personal data needs to go on-chain."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "wallet",
+            "docs": [
+              "The blocked or unblocked wallet, or the owner of the frozen or thawed token account."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "tokenAccount",
+            "docs": [
+              "The frozen or thawed token account; the default address for a block or unblock."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "action",
+            "type": {
+              "defined": {
+                "name": "enforcementKind"
+              }
+            }
+          },
+          {
+            "name": "reasonCode",
+            "type": "u16"
+          },
+          {
+            "name": "caseRef",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "authority",
+            "type": "pubkey"
+          }
+        ]
+      }
+    },
+    {
+      "name": "enforcementKind",
+      "docs": [
+        "What an `EnforcementAction` did."
+      ],
+      "type": {
+        "kind": "enum",
+        "variants": [
+          {
+            "name": "block"
+          },
+          {
+            "name": "unblock"
+          },
+          {
+            "name": "freeze"
+          },
+          {
+            "name": "thaw"
           }
         ]
       }
