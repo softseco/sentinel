@@ -11,6 +11,13 @@ an allowlist, a blocklist (sender, recipient, and a delegate moving someone else
 per-transfer limit — all toggled by a per-mint policy the issuer controls. Regulated and real-world-asset (RWA) tokens can enforce *who*
 may hold and move them, without giving up composability.
 
+**Freezing (2.2).** A hook can only refuse transfers. When a wallet must be stopped completely
+(no transfers in or out, no burns, no approvals, nothing confidential either), the issuer freezes
+its token accounts through Sentinel, which holds the mint's freeze authority. Every block, unblock,
+freeze and thaw can carry the issuer's reason code and a case reference, recorded on-chain in an
+`EnforcementAction` event, so the record of what was done and why does not depend on anyone's
+spreadsheet.
+
 **Confidential transfers.** Token-2022 hides the amount of a confidential transfer from the hook,
 which means an amount limit cannot be enforced on one — it is unenforceable, not satisfied. So a
 mint that sets `maxTransferAmount` refuses confidential transfers unless its policy also sets
@@ -18,7 +25,7 @@ mint that sets `maxTransferAmount` refuses confidential transfers unless its pol
 The allowlist and blocklist work on addresses, which stay public, so they apply to confidential
 transfers exactly as they do to public ones.
 
-> **Status: `v2.1.1` — stable API, self-audited, running on Solana devnet (not independently audited).** Built by Softseco.
+> **Status: `v2.2.0` — stable API, self-audited, running on Solana devnet (not independently audited).** Built by Softseco.
 >
 > **Devnet program:** [`5fH1jj6XeZC96jPCxKiSb2onAXcs7f4rMeqMmSsP6puD`](https://explorer.solana.com/address/5fH1jj6XeZC96jPCxKiSb2onAXcs7f4rMeqMmSsP6puD?cluster=devnet)
 
@@ -31,17 +38,20 @@ own transfer-gating program. Set a policy once; Sentinel enforces it on every mo
 ## What's here
 
 - **On-chain program** (Rust / Anchor) — the transfer hook + policy, allowlist, blocklist, limit;
-  a two-step handover of the policy authority (to a multisig, for example); an event for every
-  policy change and every refused transfer. 47 integration tests on a local validator, 11 of them
-  with real Token-2022 confidential transfers, where Token-2022 itself calls the hook. CI runs all
-  of them on every push.
+  freezing and thawing token accounts, with the reason recorded; a two-step handover of the policy
+  authority (to a multisig, for example); an event for every policy change, every enforcement
+  action and every refused transfer. 59 integration tests on a local validator, 12 of them with
+  real Token-2022 confidential transfers, where Token-2022 itself calls the hook. CI runs all of
+  them on every push.
 - **Model-based fuzzing** — [`tests-fuzz/`](./tests-fuzz): random sequences of every instruction,
-  transfer and approval in LiteSVM, each outcome and the whole state checked against a model of
-  the rules after every step. CI runs a new random set on every push.
+  transfer, approval, freeze and thaw in LiteSVM, each outcome, the whole state and every
+  enforcement event checked against a model of the rules after every step. CI runs a new random
+  set on every push.
 - **Threat model** — [`docs/threat-model.md`](./docs/threat-model.md): what Sentinel protects, who
   is trusted, the invariants it keeps, and its known limits.
 - **TypeScript SDK** — [`@softseco/sentinel`](https://www.npmjs.com/package/@softseco/sentinel):
-  create a compliant mint, manage the policy and entries, hook-aware transfers, and reads.
+  create a compliant mint, manage the policy and entries, freeze and thaw, hook-aware transfers,
+  and reads.
 - **Runnable demo** — [`sdk/examples/compliant-asset-demo.ts`](./sdk/examples/compliant-asset-demo.ts).
 
 ## Quickstart (SDK)
@@ -60,6 +70,17 @@ await sentinel.initializePolicy({ mint: mint.publicKey, allowlist: true, blockli
 await sentinel.initializeExtraAccountMetaList(mint.publicKey);
 await sentinel.addToAllowlist(mint.publicKey, investor);
 await sentinel.transfer({ mint: mint.publicKey, destinationOwner: investor, amount: 100n, decimals: 0 });
+```
+
+To freeze, create the mint with Sentinel as its freeze authority (Token-2022 cannot add one later):
+
+```ts
+import { ENFORCEMENT_REASONS, caseRef } from "@softseco/sentinel";
+
+await sentinel.createCompliantMint({ mint, decimals: 0, freezeAuthority: "sentinel" });
+// ... policy and meta list as above ...
+const why = { reasonCode: ENFORCEMENT_REASONS.courtOrder, caseRef: caseRef("CASE-2026-0042", secretSalt) };
+await sentinel.blockAndFreezeWallet(mint.publicKey, suspect, why);
 ```
 
 ## Demo
@@ -91,11 +112,11 @@ docs/                threat model
 
 ## Status
 
-**v2.1.1** — program + SDK + demo, 47 integration tests and model-based fuzzing, self-audited
+**v2.2.0** — program + SDK + demo, 59 integration tests and model-based fuzzing, self-audited
 before release (see [CHANGELOG.md](./CHANGELOG.md) · [SECURITY.md](./SECURITY.md) ·
-[threat model](./docs/threat-model.md)). Not independently audited. 2.1.1 fixes a way for a
-stranger to block a new mint's setup; mints already set up are not affected. The devnet program
-runs 2.1.0 since 12 October 2026; mints set up before 2.1 call `update_extra_account_meta_list`
+[threat model](./docs/threat-model.md)). Not independently audited. 2.2.0 adds freezing through
+Sentinel and the enforcement record; nothing existing changes. The devnet program runs 2.1.0
+since 12 October 2026; mints set up before 2.1 call `update_extra_account_meta_list`
 once to get the delegate check. Breaking since 1.0.0: `PolicyConfig` gained `allow_confidential` and existing policy
 accounts must be recreated. A confidential transfer through a Sentinel mint, with the blocklist
 enforced on the same transfer, runs end-to-end on devnet in
@@ -106,7 +127,7 @@ enforced on the same transfer, runs end-to-end on devnet in
 ```bash
 anchor build -- --tools-version v1.57                                   # program
 anchor idl build -o sdk/src/idl/sentinel.json -t sdk/src/idl/sentinel.ts  # IDL
-anchor test --skip-build                                                # 47 integration tests
+anchor test --skip-build                                                # 59 integration tests
 cd tests-fuzz && cargo test --test model -- --nocapture                 # fuzzing (needs the build)
 cd sdk && npm install && npm run build                                  # SDK
 ```

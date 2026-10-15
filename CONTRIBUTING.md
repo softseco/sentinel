@@ -54,7 +54,7 @@ the program.
 ## Tests
 
 ```bash
-anchor test --skip-build   # 47 integration tests against a local validator
+anchor test --skip-build   # 59 integration tests against a local validator
 ```
 
 `anchor test` deploys `target/deploy/sentinel.so` to a fresh local validator, so run a successful

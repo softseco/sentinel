@@ -3,7 +3,7 @@
 Sentinel is security-sensitive, on-chain compliance software (a Token-2022 transfer hook that
 gates asset transfers).
 
-> **Maturity:** `v2.1.1`, self-audited, validated against a local validator and by model-based fuzzing, and running on devnet (2.1.0). **Not independently
+> **Maturity:** `v2.2.0`, self-audited, validated against a local validator and by model-based fuzzing, and running on devnet (2.1.0). **Not independently
 > audited and not production-proven.** Review carefully before any mainnet use.
 
 ## Supported versions

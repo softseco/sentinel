@@ -8,6 +8,48 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html). The on-chain
 
 _Nothing yet._
 
+## [2.2.0] - 2026-10-15
+
+Freezing through Sentinel, and an on-chain record of why. A transfer hook can only refuse
+transfers; burns, approvals and the confidential deposit and withdraw never reach it. A frozen
+token account refuses all of them. No breaking changes: accounts, existing instructions, existing
+error codes and existing events are unchanged, and the SDK only gains methods. The devnet program
+stays at 2.1.0 for now.
+
+### Added
+- `freeze_token_account` and `thaw_token_account`: the policy authority freezes or thaws one token
+  account of the mint. Sentinel signs as the mint's freeze authority with its freeze-authority
+  address for the mint (`["freeze-authority", mint]`), so this works only on a mint whose freeze
+  authority is that address; any other mint gets `FreezeAuthorityNotSentinel` (6008). Token-2022
+  checks the rest (the account belongs to the mint and is not already frozen, or thawed).
+- `block_wallet` and `unblock_wallet`: `add_to_blocklist` and `remove_from_blocklist` that also
+  record why.
+- `EnforcementAction` event, emitted by the four instructions above: the mint, the wallet, the
+  token account (for a freeze or thaw), the action, the issuer's `reason_code` (a `u16`), a 32-byte
+  `case_ref`, and the authority that signed. Sentinel does not interpret either; `case_ref` is meant
+  for a salted hash of the issuer's case number, so no personal data goes on-chain.
+- Error `FreezeAuthorityNotSentinel` (6008), appended.
+- SDK: `createCompliantMint({ freezeAuthority: "sentinel" | PublicKey | null })` (default `null`,
+  as before), `freezeAuthority(mint)`, `setSentinelAsFreezeAuthority`, `blockWallet`,
+  `unblockWallet`, `freezeTokenAccount`, `thawTokenAccount`, `freezeWallet` and `thawWallet` (every
+  token account the wallet holds, eight per transaction), `blockAndFreezeWallet` (the block and the
+  first freezes in one transaction), `tokenAccountsOf`, `isFrozen`, the builders
+  `blockWalletInstruction`, `unblockWalletInstruction` and `freezeInstruction`,
+  `ENFORCEMENT_REASONS` (a suggested list of reason codes) and `caseRef(caseId, salt)`. New
+  dependency: `@noble/hashes`.
+- Tests: `tests/enforcement.ts` (11: reasons on block and unblock, freezing a whole wallet, what a
+  frozen account can no longer do, who may freeze, freezing a frozen account, thawing, block and
+  freeze in one transaction, a mint whose freeze authority is the issuer before and after handing
+  it to Sentinel, a mint without one, input checks), and a confidential transfer to a frozen account
+  in `tests/confidential.ts`. The suite is 59 tests. The fuzz model covers freezes, thaws, the
+  hand-over, frozen accounts in transfers and approvals, and every `EnforcementAction`, field by
+  field. `tests-fuzz/mutants.py` has 9 new mutants; the fuzz tests catch all 35. Line coverage of
+  the program under fuzzing: 487 of 505 lines with code (96.4%), every line added in 2.2 among
+  them.
+- Threat model: invariants 10 and 11, the freeze authority among the trusted actors, and four
+  known limits (a freeze authority must be chosen when the mint is created; handing it to Sentinel
+  is one-way; a freeze covers the accounts that exist; reasons are not interpreted).
+
 ## [2.1.1] - 2026-10-14
 
 A fix found while preparing for an independent audit, and the tests that come with that work. No
@@ -222,7 +264,8 @@ Informational (no exploit): the transfer hook relies on Token-2022's determinist
 resolution for the allow/block entries; documented in-code. Not independently audited — review
 before production use.
 
-[Unreleased]: https://github.com/softseco/sentinel/compare/v2.1.1...HEAD
+[Unreleased]: https://github.com/softseco/sentinel/compare/v2.2.0...HEAD
+[2.2.0]: https://github.com/softseco/sentinel/releases/tag/v2.2.0
 [2.1.1]: https://github.com/softseco/sentinel/releases/tag/v2.1.1
 [2.1.0]: https://github.com/softseco/sentinel/releases/tag/v2.1.0
 [2.0.2]: https://github.com/softseco/sentinel/releases/tag/v2.0.2

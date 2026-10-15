@@ -2,9 +2,10 @@
 
 TypeScript SDK for **Sentinel** — programmable compliance for Token-2022 tokenized assets, built on
 the Transfer Hook extension. Create a compliant mint, set a policy (allowlist, blocklist, transfer
-limit), manage entries, and move tokens through the hook — in a handful of async calls.
+limit), manage entries, freeze and thaw accounts with the reason recorded, and move tokens through
+the hook — in a handful of async calls.
 
-> **Status: `v2.1.1`.** Stable API, self-audited, not independently audited. The program is deployed
+> **Status: `v2.2.0`.** Stable API, self-audited, not independently audited. The program is deployed
 > on Solana devnet at `5fH1jj6XeZC96jPCxKiSb2onAXcs7f4rMeqMmSsP6puD` (2.1.0). Built by Softseco.
 
 ## Install
@@ -55,7 +56,7 @@ await client.isBlocklisted(mint.publicKey, someWallet);
 
 `SentinelClient(provider)` exposes:
 
-- `createCompliantMint({ mint, decimals, mintAuthority? })`
+- `createCompliantMint({ mint, decimals, mintAuthority?, freezeAuthority? })`
 - `initializePolicy({ mint, allowlist, blocklist, maxTransferAmount, allowConfidential? })` /
   `updatePolicy(...)` — `allowConfidential` defaults to `false`
 - `initializeExtraAccountMetaList(mint)`
@@ -80,6 +81,19 @@ Since 2.1:
   `listInstruction`, `proposeAuthorityInstruction`, `acceptAuthorityInstruction`,
   `cancelAuthorityTransferInstruction`, `updateExtraAccountMetaListInstruction`
 
+Since 2.2 (see "Freezing" below):
+
+- `createCompliantMint({ ..., freezeAuthority: "sentinel" })`, `freezeAuthority(mint)`,
+  `setSentinelAsFreezeAuthority(mint, currentFreezeAuthority)`
+- `blockWallet(mint, wallet, why)` / `unblockWallet(mint, wallet, why)`
+- `freezeTokenAccount(mint, tokenAccount, why)` / `thawTokenAccount(mint, tokenAccount, why)`
+- `freezeWallet(mint, owner, why)` / `thawWallet(mint, owner, why)`: every token account the wallet
+  holds, eight per transaction
+- `blockAndFreezeWallet(mint, wallet, why)`
+- `tokenAccountsOf(mint, owner)`, `isFrozen(tokenAccount)`
+- Builders: `blockWalletInstruction`, `unblockWalletInstruction`, `freezeInstruction`
+- `ENFORCEMENT_REASONS`, `caseRef(caseId, salt)`, and the `enforcementAction` event in `parseEvents`
+
 ## Policy authority held by a multisig
 
 The `SentinelClient` methods sign with the provider wallet. When the policy authority is a
@@ -98,6 +112,42 @@ const block = await client.listInstruction({ mint, wallet, list: "block", action
 
 The handover takes two steps so that a mistyped address cannot lock the policy: until the new
 authority signs `accept`, the old one stays in charge and can `cancelAuthorityTransfer`.
+
+## Freezing
+
+A transfer hook can only refuse transfers. Burning, approving, and the confidential deposit and
+withdraw never reach it. To stop a wallet completely, freeze its token accounts: Token-2022 then
+refuses every instruction on them, confidential ones included, until they are thawed.
+
+Sentinel freezes through its freeze-authority address for the mint (`freezeAuthority(mint)`), and
+only for the policy authority. Choose it when you create the mint, because Token-2022 cannot add a
+freeze authority later:
+
+```ts
+import { ENFORCEMENT_REASONS, caseRef } from "@softseco/sentinel";
+
+await client.createCompliantMint({ mint, decimals: 2, freezeAuthority: "sentinel" });
+
+// Why: a reason code from your own list (or ENFORCEMENT_REASONS) and a 32-byte case reference.
+const why = { reasonCode: ENFORCEMENT_REASONS.fraud, caseRef: caseRef("CASE-2026-0042", secretSalt) };
+
+await client.blockAndFreezeWallet(mint.publicKey, suspect, why); // blocklist + freeze its accounts
+await client.thawWallet(mint.publicKey, suspect, { ...why, reasonCode: ENFORCEMENT_REASONS.caseClosed });
+await client.unblockWallet(mint.publicKey, suspect, { ...why, reasonCode: ENFORCEMENT_REASONS.caseClosed });
+```
+
+A mint created with your own key as freeze authority can hand it over with
+`setSentinelAsFreezeAuthority(mint, freezeAuthoritySigner)`. In 2.2 that is one-way: Sentinel has
+no instruction to give it back.
+
+Freezing is per token account, and a wallet can open a new one, so block the wallet as well;
+`blockAndFreezeWallet` does both, the block and the first accounts in one transaction.
+
+Each of these emits an `enforcementAction` event with the mint, the wallet, the token account, the
+action, the reason code, the case reference and the authority that signed. Sentinel does not
+interpret the reason code. `caseRef` hashes your case number with a salt, so no case number or
+personal data goes on-chain; keep the salt secret, or short case numbers can be found from their
+hashes by trying them all.
 
 ## Confidential transfers
 
