@@ -4,8 +4,9 @@
 //! Each case sets up a mint whose transfer hook is Sentinel and whose freeze authority is Sentinel's
 //! freeze address, the issuer, or no one, then runs a random sequence of operations: every Sentinel
 //! instruction, signed by the right authority or by someone else; blocks, freezes and thaws with
-//! reasons, on the right accounts and on wrong ones; the issuer handing the freeze authority to
-//! Sentinel; public transfers through Token-2022, by owners and by delegates; approvals; direct
+//! reasons, on the right accounts and on wrong ones; the freeze authority handed to Sentinel, and
+//! by Sentinel to someone else or to no one (2.3); public transfers through Token-2022, by owners
+//! and by delegates; approvals; direct
 //! calls to the hook (public and confidential amounts, and with made-up accounts); and strangers
 //! funding the program's addresses before setup. A plain Rust model predicts each outcome. After
 //! every operation the test checks that
@@ -13,8 +14,8 @@
 //! - the outcome matches the model (success, or the exact error where the model names one),
 //! - the policy, the allow and block entries, a pending handover, every balance, delegation and
 //!   frozen state, the mint's freeze authority, and the meta list are exactly what the model says,
-//! - a successful operation emitted exactly the `EnforcementAction` events the model expects,
-//!   field by field, and no others,
+//! - a successful operation emitted exactly the `EnforcementAction` and `FreezeAuthorityChanged`
+//!   events the model expects, field by field, and no others,
 //! - the total supply is unchanged by transfers.
 //!
 //! The model is the threat model's invariants written as code (`docs/threat-model.md`):
@@ -117,9 +118,16 @@ enum Op {
         reason: Reason,
     },
     /// Token-2022 `SetAuthority`: `signer` names Sentinel's freeze address as the mint's freeze
-    /// authority. Only the current freeze authority can; once Sentinel holds it, no one can.
+    /// authority. Only the current freeze authority can; while Sentinel holds it, only Sentinel's
+    /// own `set_freeze_authority` moves it.
     HandOverFreeze {
         signer: Who,
+    },
+    /// Sentinel's `set_freeze_authority` (2.3).
+    SetFreezeAuthority {
+        signer: Who,
+        to: NewFreeze,
+        reason: Reason,
     },
     Propose {
         signer: Who,
@@ -194,13 +202,15 @@ enum Target {
     Mint,
 }
 
-/// Who holds the mint's freeze authority.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-enum FreezeBy {
+/// Where `set_freeze_authority` hands the freeze authority.
+#[derive(Clone, Copy, Debug)]
+enum NewFreeze {
+    Who(Who),
+    /// Sentinel's own freeze address: refused.
     Sentinel,
-    Issuer,
-    #[default]
-    NoOne,
+    /// The default address: refused (giving it up is `Renounce`).
+    Default,
+    Renounce,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -249,7 +259,7 @@ struct Model {
     balances: Vec<u64>,
     delegations: Vec<Option<(Pubkey, u64)>>,
     frozen: Vec<bool>,
-    freeze_by: FreezeBy,
+    freeze_authority: Option<Pubkey>,
     supply: u64,
 }
 
@@ -378,7 +388,7 @@ fn random_op(rng: &mut Rng, model: &Model, world: &World) -> Op {
     if model.pending.is_some() && rng.chance(10) {
         return random_accept(rng, model, world);
     }
-    match rng.below(112) {
+    match rng.below(116) {
         0..=29 => {
             let from = wallet(rng);
             let to = if rng.chance(10) { from } else { wallet(rng) };
@@ -550,13 +560,29 @@ fn random_op(rng: &mut Rng, model: &Model, world: &World) -> Op {
                 reason: random_reason(rng),
             }
         }
-        _ => Op::HandOverFreeze {
-            signer: if rng.chance(70) {
-                Who::Issuer
-            } else {
-                random_who(rng, model, world)
+        110..=111 => Op::HandOverFreeze {
+            // Mostly whoever holds the freeze authority now (Sentinel's address maps to Nobody).
+            signer: match model.freeze_authority {
+                Some(k) if rng.chance(60) => who_of(world, k),
+                _ if rng.chance(50) => Who::Issuer,
+                _ => random_who(rng, model, world),
             },
         },
+        _ => {
+            let to = match rng.below(10) {
+                0 => NewFreeze::Sentinel,
+                1 => NewFreeze::Default,
+                2 => NewFreeze::Renounce,
+                3 => NewFreeze::Who(Who::Nobody),
+                4 => NewFreeze::Who(Who::Issuer),
+                _ => NewFreeze::Who(Who::Wallet(wallet(rng))),
+            };
+            Op::SetFreezeAuthority {
+                signer: random_who(rng, model, world),
+                to,
+                reason: random_reason(rng),
+            }
+        }
     }
 }
 
@@ -585,8 +611,11 @@ impl fmt::Display for Op {
 fn step(world: &mut World, model: &mut Model, op: &Op) -> Result<Expect, String> {
     let mint = world.mint;
     let signer_ok = |who: Who| who != Who::Nobody;
-    // The `EnforcementAction` events a successful operation must emit, in order.
+    // The `EnforcementAction` and `FreezeAuthorityChanged` events a successful operation must emit,
+    // in order.
     let mut events: Vec<Enforcement> = Vec::new();
+    let mut freeze_changes: Vec<FreezeChange> = Vec::new();
+    let sentinel_freeze = freeze_authority_pda(&mint);
     let (expect, ixs, signers): (Expect, Vec<solana_instruction::Instruction>, Vec<Who>) = match op
         .clone()
     {
@@ -765,7 +794,7 @@ fn step(world: &mut World, model: &mut Model, op: &Op) -> Result<Expect, String>
             let expect = match model.policy {
                 _ if !signer_ok(signer) => Expect::Err,
                 None => Expect::Err,
-                Some(_) if model.freeze_by != FreezeBy::Sentinel => {
+                Some(_) if model.freeze_authority != Some(sentinel_freeze) => {
                     Expect::Code(code::FREEZE_AUTHORITY_NOT_SENTINEL)
                 }
                 Some((a, _)) if a != s => Expect::Code(code::UNAUTHORIZED),
@@ -796,24 +825,54 @@ fn step(world: &mut World, model: &mut Model, op: &Op) -> Result<Expect, String>
         }
         Op::HandOverFreeze { signer } => {
             let s = world.key(signer);
-            let expect = if signer_ok(signer)
-                && model.freeze_by == FreezeBy::Issuer
-                && s == world.issuer.pubkey()
-            {
+            let expect = if signer_ok(signer) && model.freeze_authority == Some(s) {
                 Expect::Ok
             } else {
                 Expect::Err
             };
             if expect == Expect::Ok {
-                model.freeze_by = FreezeBy::Sentinel;
+                model.freeze_authority = Some(sentinel_freeze);
             }
             (
                 expect,
-                vec![set_freeze_authority_ix(
-                    &mint,
-                    &s,
-                    &freeze_authority_pda(&mint),
-                )],
+                vec![set_freeze_authority_ix(&mint, &s, &sentinel_freeze)],
+                vec![signer],
+            )
+        }
+        Op::SetFreezeAuthority { signer, to, reason } => {
+            let s = world.key(signer);
+            let new = match to {
+                NewFreeze::Who(w) => Some(world.key(w)),
+                NewFreeze::Sentinel => Some(sentinel_freeze),
+                NewFreeze::Default => Some(Pubkey::default()),
+                NewFreeze::Renounce => None,
+            };
+            // Accounts load first (a missing policy fails there), then the mint's freeze authority
+            // and the policy authority are checked, then the new address.
+            let expect = match model.policy {
+                _ if !signer_ok(signer) => Expect::Err,
+                None => Expect::Err,
+                Some(_) if model.freeze_authority != Some(sentinel_freeze) => {
+                    Expect::Code(code::FREEZE_AUTHORITY_NOT_SENTINEL)
+                }
+                Some((a, _)) if a != s => Expect::Code(code::UNAUTHORIZED),
+                Some(_) if new == Some(sentinel_freeze) || new == Some(Pubkey::default()) => {
+                    Expect::Code(code::INVALID_AUTHORITY)
+                }
+                Some(_) => Expect::Ok,
+            };
+            if expect == Expect::Ok {
+                model.freeze_authority = new;
+                freeze_changes.push(FreezeChange {
+                    mint,
+                    new_freeze_authority: new,
+                    reason,
+                    authority: s,
+                });
+            }
+            (
+                expect,
+                vec![ix::set_freeze_authority(s, mint, new, reason)],
                 vec![signer],
             )
         }
@@ -1075,6 +1134,12 @@ fn step(world: &mut World, model: &mut Model, op: &Op) -> Result<Expect, String>
                 "EnforcementAction events {emitted:#?}, model {events:#?}"
             ));
         }
+        let emitted = freeze_authority_events(logs);
+        if emitted != freeze_changes {
+            return Err(format!(
+                "FreezeAuthorityChanged events {emitted:#?}, model {freeze_changes:#?}"
+            ));
+        }
     }
     if expect == Expect::Ok {
         if let Op::InitMetaList { .. } | Op::UpdateMetaList { .. } = op {
@@ -1129,15 +1194,10 @@ fn check_state(world: &World, model: &Model) -> Result<(), String> {
         return Err("meta list bytes changed outside init/update".into());
     }
     let freeze_authority = freeze_authority_of(svm, &mint);
-    let model_freeze_authority = match model.freeze_by {
-        FreezeBy::Sentinel => Some(freeze_authority_pda(&mint)),
-        FreezeBy::Issuer => Some(world.issuer.pubkey()),
-        FreezeBy::NoOne => None,
-    };
-    if freeze_authority != model_freeze_authority {
+    if freeze_authority != model.freeze_authority {
         return Err(format!(
             "freeze authority {freeze_authority:?}, model {:?}",
-            model.freeze_by
+            model.freeze_authority
         ));
     }
     let mut total = 0;
@@ -1174,16 +1234,13 @@ fn setup(rng: &mut Rng) -> (World, Model, Vec<Op>) {
     for w in &wallets {
         fund(&mut svm, &w.pubkey(), 100_000_000_000);
     }
-    let freeze_by = match rng.below(20) {
-        0..=11 => FreezeBy::Sentinel,
-        12..=16 => FreezeBy::Issuer,
-        _ => FreezeBy::NoOne,
-    };
+    // The mint's freeze authority: Sentinel's address in most cases, the issuer in some, no one in
+    // a few.
     let mint = Keypair::new();
-    let freeze_authority = match freeze_by {
-        FreezeBy::Sentinel => Some(freeze_authority_pda(&mint.pubkey())),
-        FreezeBy::Issuer => Some(issuer.pubkey()),
-        FreezeBy::NoOne => None,
+    let freeze_authority = match rng.below(20) {
+        0..=11 => Some(freeze_authority_pda(&mint.pubkey())),
+        12..=16 => Some(issuer.pubkey()),
+        _ => None,
     };
     let mint = create_hooked_mint(&mut svm, &issuer, mint, freeze_authority.as_ref()).pubkey();
     // Another mint whose freeze authority is Sentinel's address for that mint.
@@ -1200,7 +1257,7 @@ fn setup(rng: &mut Rng) -> (World, Model, Vec<Op>) {
         balances: vec![0; WALLETS],
         delegations: vec![None; WALLETS],
         frozen: vec![false; WALLETS],
-        freeze_by,
+        freeze_authority,
         ..Model::default()
     };
     for (i, account) in accounts.iter().enumerate() {

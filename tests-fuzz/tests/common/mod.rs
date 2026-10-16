@@ -156,6 +156,15 @@ pub enum Action {
     Thaw,
 }
 
+/// A decoded `FreezeAuthorityChanged` event (2.3).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FreezeChange {
+    pub mint: Pubkey,
+    pub new_freeze_authority: Option<Pubkey>,
+    pub reason: Reason,
+    pub authority: Pubkey,
+}
+
 /// A decoded `EnforcementAction` event.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Enforcement {
@@ -295,6 +304,36 @@ pub mod ix {
                 r(mint),
                 r(policy_pda(&mint)),
                 w(token_account),
+                r(freeze_authority_pda(&mint)),
+                r(TOKEN_2022_ID),
+            ],
+        )
+    }
+
+    /// Sentinel's `set_freeze_authority` (2.3): hand the mint's freeze authority from Sentinel's
+    /// address to `new`, or give it up with `None`.
+    pub fn set_freeze_authority(
+        authority: Pubkey,
+        mint: Pubkey,
+        new: Option<Pubkey>,
+        reason: Reason,
+    ) -> Instruction {
+        let mut args = match new {
+            Some(key) => {
+                let mut v = vec![1u8];
+                v.extend_from_slice(key.as_ref());
+                v
+            }
+            None => vec![0u8],
+        };
+        args.extend_from_slice(&reason.args());
+        anchor_ix(
+            "set_freeze_authority",
+            &args,
+            vec![
+                rs(authority),
+                w(mint),
+                r(policy_pda(&mint)),
                 r(freeze_authority_pda(&mint)),
                 r(TOKEN_2022_ID),
             ],
@@ -482,18 +521,46 @@ fn base64_decode(text: &str) -> Option<Vec<u8>> {
     Some(out)
 }
 
+/// The payloads (after the 8-byte tag) of every event named `name` in `logs`, in order.
+fn event_payloads(logs: &[String], name: &str) -> Vec<Vec<u8>> {
+    let tag = discriminator(&format!("event:{name}"));
+    logs.iter()
+        .filter_map(|line| line.strip_prefix("Program data: ").and_then(base64_decode))
+        .filter(|data| data.len() >= 8 && data[..8] == tag)
+        .map(|data| data[8..].to_vec())
+        .collect()
+}
+
+/// Every `FreezeAuthorityChanged` event in `logs`, in order.
+pub fn freeze_authority_events(logs: &[String]) -> Vec<FreezeChange> {
+    event_payloads(logs, "FreezeAuthorityChanged")
+        .into_iter()
+        .map(|d| {
+            let key = |at: usize| Pubkey::new_from_array(d[at..at + 32].try_into().unwrap());
+            let (new_freeze_authority, at) = match d[32] {
+                0 => (None, 33),
+                1 => (Some(key(33)), 65),
+                other => panic!("bad Option tag {other}"),
+            };
+            assert_eq!(d.len(), at + 2 + 32 + 32, "FreezeAuthorityChanged size");
+            FreezeChange {
+                mint: key(0),
+                new_freeze_authority,
+                reason: Reason {
+                    code: u16::from_le_bytes([d[at], d[at + 1]]),
+                    case_ref: d[at + 2..at + 34].try_into().unwrap(),
+                },
+                authority: key(at + 34),
+            }
+        })
+        .collect()
+}
+
 /// Every `EnforcementAction` event in `logs`, in order.
 pub fn enforcement_events(logs: &[String]) -> Vec<Enforcement> {
-    let tag = discriminator("event:EnforcementAction");
     let mut events = Vec::new();
-    for line in logs {
-        let Some(data) = line.strip_prefix("Program data: ").and_then(base64_decode) else {
-            continue;
-        };
-        if data.len() < 8 || data[..8] != tag {
-            continue;
-        }
-        let d = &data[8..];
+    for data in event_payloads(logs, "EnforcementAction") {
+        let d = &data[..];
         assert_eq!(d.len(), 32 * 4 + 1 + 2 + 32, "EnforcementAction size");
         let key = |at: usize| Pubkey::new_from_array(d[at..at + 32].try_into().unwrap());
         let action = match d[96] {

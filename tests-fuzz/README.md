@@ -47,7 +47,9 @@ Then random operations, each picked from:
 - freezes and thaws with random reason codes and case references, mostly of the mint's token
   accounts, sometimes of the other mint's account, the policy account or the mint itself, and
   sometimes of an account already in that state;
-- the issuer (or someone else) handing the mint's freeze authority to Sentinel;
+- whoever holds the mint's freeze authority (or someone else) handing it to Sentinel, and Sentinel
+  handing it on with `set_freeze_authority` (2.3): to the issuer, a wallet, an address nobody
+  holds, or nobody at all, and to the addresses it must refuse (its own and the default address);
 - public transfers through Token-2022, by the owner or a delegate, including self-transfers,
   zero amounts, amounts at and above the limit, and more than the balance;
 - approvals of delegates, which a frozen account refuses;
@@ -67,9 +69,9 @@ Then random operations, each picked from:
   handover, every balance, delegation and frozen flag, the mint's freeze authority, the meta list's
   bytes (which only `initialize` and `update_extra_account_meta_list` may change), and the total
   supply.
-- **The record.** Every `EnforcementAction` event a successful step emitted, decoded from its logs
-  and compared field by field with what the model expects; a step that should emit none must emit
-  none.
+- **The record.** Every `EnforcementAction` and `FreezeAuthorityChanged` event a successful step
+  emitted, decoded from its logs and compared field by field with what the model expects; a step
+  that should emit none must emit none.
 
 The model is the threat model's invariants written as code (`docs/threat-model.md`): fail closed,
 only the policy authority changes the rules, only the mint authority sets up and nobody can block
@@ -93,7 +95,7 @@ a rule switched off, an off-by-one), builds each broken program and runs these t
 python3 tests-fuzz/mutants.py          # from the repository root; about 10 s per mutant
 ```
 
-With the default run (64 cases, 15 October 2026), all 35 are caught:
+With the default run (64 cases, 16 October 2026), all 39 are caught:
 
 | Mutant | What it breaks | Result |
 |---|---|---|
@@ -132,6 +134,10 @@ With the default run (64 cases, 15 October 2026), all 35 are caught:
 | `freeze-case-ref-dropped` | a freeze or thaw records an empty case reference | caught |
 | `freeze-event-wrong-wallet` | a freeze names the signer instead of the account's owner | caught |
 | `freeze-event-wrong-account` | a freeze names the mint instead of the token account | caught |
+| `set-freeze-authority-anyone` | anyone can move the freeze authority away from Sentinel | caught |
+| `set-freeze-authority-check-off` | Sentinel tries to move a freeze authority it does not hold (wrong error) | caught |
+| `freeze-authority-to-sentinel-allowed` | handing the freeze authority to Sentinel's own address is accepted | caught |
+| `freeze-authority-change-recorded-wrong` | the record says the freeze authority was given up when it was handed on | caught |
 
 A mutant that survives points to a gap in the model or in what the generator tries.
 `accept-wrong-rent-receiver` survived the first run, because the generator rarely named a wrong
@@ -153,14 +159,15 @@ cases, so it runs in chunks and keeps only the coverage files.
 bash tests-fuzz/coverage.sh       # from the repository root; about 10 minutes
 ```
 
-On 15 October 2026 (48 cases, 2.2.0): **487 of the 505 lines of `lib.rs` that carry code were
-executed (96.4%).** Every line added in 2.2 is among them. The other 18:
+On 16 October 2026 (48 cases, 2.3.0): **524 of the 543 lines of `lib.rs` that carry code were
+executed (96.5%).** Every line added in 2.2 and 2.3 is among them except one `?`. The other 19:
 
 | Lines | What | Why not here |
 |---|---|---|
-| 162–176 | `update_extra_account_meta_list` growing a list made before 2.1 | Every list made by 2.1 already has its full size. `scripts/upgrade-check.sh` covers it on a local validator: a 2.0.2 mint upgraded and migrated. |
-| 554, 567, 587, 600 | the `?` after `ExtraAccountMeta::new_with_seeds` | The seeds are constants; these calls cannot fail. |
-| 452, 465 | the `?` after the System transfer and `allocate` in `create_program_account` | The transfer fails only if the issuer cannot pay. A failing `allocate` does run (a second meta list), but the debug information does not attribute its exit to this line. |
-| 656 | `false` when an account's data cannot be borrowed | Nothing else holds the account inside the hook. |
+| 166–180 | `update_extra_account_meta_list` growing a list made before 2.1 | Every list made by 2.1 already has its full size. `scripts/upgrade-check.sh` covers it on a local validator: a 2.0.2 mint upgraded and migrated. |
+| 604, 617, 637, 650 | the `?` after `ExtraAccountMeta::new_with_seeds` | The seeds are constants; these calls cannot fail. |
+| 502, 515 | the `?` after the System transfer and `allocate` in `create_program_account` | The transfer fails only if the issuer cannot pay. A failing `allocate` does run (a second meta list), but the debug information does not attribute its exit to this line. |
+| 706 | `false` when an account's data cannot be borrowed | Nothing else holds the account inside the hook. |
+| 362 | the `?` after the `SetAuthority` call in `set_freeze_authority` (2.3) | The mint's constraint already ensures that Sentinel's address is the freeze authority, so Token-2022 accepts the call. The mutant that removes that constraint does reach it. |
 
 Line coverage counts lines, not paths; the fuzz tests' value is in the model they check against.

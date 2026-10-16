@@ -38,6 +38,20 @@ def drop_has_one(struct):
     return apply
 
 
+def in_struct(struct, old, new):
+    """Replace `old` with `new` inside the accounts struct `struct` only."""
+    start = f"pub struct {struct}<'info> {{\n"
+
+    def apply(src):
+        i = src.index(start)
+        j = src.index("\n}\n", i)
+        block = src[i:j]
+        assert block.count(old) == 1, f"not exactly one match in {struct} for: {old!r}"
+        return src[:i] + block.replace(old, new) + src[j:]
+
+    return apply
+
+
 def replace(old, new):
     def apply(src):
         assert src.count(old) == 1, f"not exactly one match for: {old!r}"
@@ -91,7 +105,8 @@ MUTANTS = [
     ("funded-address-blocks-setup", replace("if current == 0 {", "if true {")),
     # Freezing and the enforcement record (2.2).
     ("freeze-anyone", drop_has_one("SetFrozen")),
-    ("freeze-authority-check-off", replace(
+    ("freeze-authority-check-off", in_struct(
+        "SetFrozen",
         "constraint = mint.freeze_authority == COption::Some(freeze_authority.key())",
         "constraint = true")),
     ("thaw-freezes", replace("        set_frozen(&ctx, false)?;", "        set_frozen(&ctx, true)?;")),
@@ -112,6 +127,17 @@ MUTANTS = [
     ("freeze-event-wrong-account", replace(
         "        token_account: ctx.accounts.token_account.key(),\n",
         "        token_account: ctx.accounts.mint.key(),\n")),
+    # Handing the freeze authority on (2.3).
+    ("set-freeze-authority-anyone", drop_has_one("SetFreezeAuthority")),
+    ("set-freeze-authority-check-off", in_struct(
+        "SetFreezeAuthority",
+        "constraint = mint.freeze_authority == COption::Some(freeze_authority.key())",
+        "constraint = true")),
+    ("freeze-authority-to-sentinel-allowed", replace(
+        "new != Pubkey::default() && new != sentinel", "new != Pubkey::default()")),
+    ("freeze-authority-change-recorded-wrong", replace(
+        "            new_freeze_authority,\n            reason_code,\n",
+        "            new_freeze_authority: None,\n            reason_code,\n")),
 ]
 
 
