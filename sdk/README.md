@@ -5,7 +5,7 @@ the Transfer Hook extension. Create a compliant mint, set a policy (allowlist, b
 limit), manage entries, freeze and thaw accounts with the reason recorded, and move tokens through
 the hook — in a handful of async calls.
 
-> **Status: `v2.2.0`.** Stable API, self-audited, not independently audited. The program is deployed
+> **Status: `v2.3.0`.** Stable API, self-audited, not independently audited. The program is deployed
 > on Solana devnet at `5fH1jj6XeZC96jPCxKiSb2onAXcs7f4rMeqMmSsP6puD` (2.1.0). Built by Softseco.
 
 ## Install
@@ -94,6 +94,12 @@ Since 2.2 (see "Freezing" below):
 - Builders: `blockWalletInstruction`, `unblockWalletInstruction`, `freezeInstruction`
 - `ENFORCEMENT_REASONS`, `caseRef(caseId, salt)`, and the `enforcementAction` event in `parseEvents`
 
+Since 2.3:
+
+- `setFreezeAuthority(mint, newFreezeAuthority | null, why)`: Sentinel hands the freeze authority
+  to another address, or gives it up for good with `null`; `setFreezeAuthorityInstruction` for a
+  multisig; `getFreezeAuthority(mint)`; the `freezeAuthorityChanged` event in `parseEvents`
+
 ## Policy authority held by a multisig
 
 The `SentinelClient` methods sign with the provider wallet. When the policy authority is a
@@ -137,8 +143,17 @@ await client.unblockWallet(mint.publicKey, suspect, { ...why, reasonCode: ENFORC
 ```
 
 A mint created with your own key as freeze authority can hand it over with
-`setSentinelAsFreezeAuthority(mint, freezeAuthoritySigner)`. In 2.2 that is one-way: Sentinel has
-no instruction to give it back.
+`setSentinelAsFreezeAuthority(mint, freezeAuthoritySigner)`. Since 2.3 the policy authority can
+move it on again, recording why, for example to a newer compliance program:
+
+```ts
+await client.setFreezeAuthority(mint.publicKey, successor, { reasonCode: ENFORCEMENT_REASONS.internalReview, caseRef: caseRef("MIGRATION-1", secretSalt) });
+// or give it up for good: nobody can freeze the mint afterwards
+await client.setFreezeAuthority(mint.publicKey, null, why);
+```
+
+From then on only `successor` can freeze, thaw or hand the authority back. Check the address
+twice: Sentinel cannot tell a mistyped one from the right one.
 
 Freezing is per token account, and a wallet can open a new one, so block the wallet as well;
 `blockAndFreezeWallet` does both, the block and the first accounts in one transaction.

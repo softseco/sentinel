@@ -8,6 +8,40 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html). The on-chain
 
 _Nothing yet._
 
+## [2.3.0] - 2026-10-16
+
+The freeze authority can leave Sentinel again. In 2.2, handing a mint's freeze authority to
+Sentinel was one-way: only a program upgrade could move it. No breaking changes: accounts, existing
+instructions, error codes and events are unchanged, and the SDK only gains methods. The devnet
+program stays at 2.1.0 for now.
+
+### Added
+- `set_freeze_authority(new_freeze_authority, reason_code, case_ref)`: the policy authority hands
+  the mint's freeze authority from Sentinel's address to another address (for example a newer
+  compliance program or the issuer's own multisig), or gives it up for good with `None`. It works
+  only while Sentinel holds the freeze authority (`FreezeAuthorityNotSentinel`, 6008, otherwise).
+  It refuses Sentinel's own address and the default address (`InvalidAuthority`, 6007). Afterwards
+  only the new holder can freeze, thaw, or hand the authority back to Sentinel.
+- `FreezeAuthorityChanged` event: the mint, the new freeze authority (or none), the reason code,
+  the case reference and the authority that signed.
+- SDK: `setFreezeAuthority(mint, newFreezeAuthority | null, why)`,
+  `setFreezeAuthorityInstruction` (for a multisig authority; it refuses Sentinel's own address and
+  the default address before sending) and `getFreezeAuthority(mint)`.
+- Tests: four in `tests/enforcement.ts` (only the policy authority, hand on and back with the reason
+  recorded, give up for good, refused addresses and mints Sentinel does not hold); 63 in all. The
+  fuzz model treats the freeze authority as any address, adds `set_freeze_authority` and decodes
+  `FreezeAuthorityChanged`; `tests-fuzz/mutants.py` has 4 new mutants, and the fuzz tests catch
+  all 39. Line coverage of the program under fuzzing: 524 of 543 lines with code (96.5%).
+- `tests/0-validator-hiccups.ts`: the integration tests retry a transaction whose preflight fails
+  with "Blockhash not found". A local validator on a busy machine can stall for a few seconds, and
+  that error then failed a test that had nothing wrong with it (seen once in WSL). A transaction
+  that fails preflight is never sent, so the retry cannot run anything twice.
+
+### Changed
+- Threat model: invariants 10 and 11 cover `set_freeze_authority`; the "one-way" known limit is
+  replaced by "handing the freeze authority on is final for Sentinel" (a mistyped address loses the
+  freeze power).
+
 ## [2.2.0] - 2026-10-15
 
 Freezing through Sentinel, and an on-chain record of why. A transfer hook can only refuse
@@ -264,7 +298,8 @@ Informational (no exploit): the transfer hook relies on Token-2022's determinist
 resolution for the allow/block entries; documented in-code. Not independently audited — review
 before production use.
 
-[Unreleased]: https://github.com/softseco/sentinel/compare/v2.2.0...HEAD
+[Unreleased]: https://github.com/softseco/sentinel/compare/v2.3.0...HEAD
+[2.3.0]: https://github.com/softseco/sentinel/releases/tag/v2.3.0
 [2.2.0]: https://github.com/softseco/sentinel/releases/tag/v2.2.0
 [2.1.1]: https://github.com/softseco/sentinel/releases/tag/v2.1.1
 [2.1.0]: https://github.com/softseco/sentinel/releases/tag/v2.1.0

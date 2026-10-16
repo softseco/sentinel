@@ -16,7 +16,8 @@ may hold and move them, without giving up composability.
 its token accounts through Sentinel, which holds the mint's freeze authority. Every block, unblock,
 freeze and thaw can carry the issuer's reason code and a case reference, recorded on-chain in an
 `EnforcementAction` event, so the record of what was done and why does not depend on anyone's
-spreadsheet.
+spreadsheet. The freeze authority can also leave Sentinel again (2.3), to another address or to
+no one, and that move is recorded the same way.
 
 **Confidential transfers.** Token-2022 hides the amount of a confidential transfer from the hook,
 which means an amount limit cannot be enforced on one — it is unenforceable, not satisfied. So a
@@ -25,7 +26,7 @@ mint that sets `maxTransferAmount` refuses confidential transfers unless its pol
 The allowlist and blocklist work on addresses, which stay public, so they apply to confidential
 transfers exactly as they do to public ones.
 
-> **Status: `v2.2.0` — stable API, self-audited, running on Solana devnet (not independently audited).** Built by Softseco.
+> **Status: `v2.3.0` — stable API, self-audited, running on Solana devnet (not independently audited).** Built by Softseco.
 >
 > **Devnet program:** [`5fH1jj6XeZC96jPCxKiSb2onAXcs7f4rMeqMmSsP6puD`](https://explorer.solana.com/address/5fH1jj6XeZC96jPCxKiSb2onAXcs7f4rMeqMmSsP6puD?cluster=devnet)
 
@@ -40,7 +41,7 @@ own transfer-gating program. Set a policy once; Sentinel enforces it on every mo
 - **On-chain program** (Rust / Anchor) — the transfer hook + policy, allowlist, blocklist, limit;
   freezing and thawing token accounts, with the reason recorded; a two-step handover of the policy
   authority (to a multisig, for example); an event for every policy change, every enforcement
-  action and every refused transfer. 59 integration tests on a local validator, 12 of them with
+  action and every refused transfer. 63 integration tests on a local validator, 12 of them with
   real Token-2022 confidential transfers, where Token-2022 itself calls the hook. CI runs all of
   them on every push.
 - **Model-based fuzzing** — [`tests-fuzz/`](./tests-fuzz): random sequences of every instruction,
@@ -112,10 +113,11 @@ docs/                threat model
 
 ## Status
 
-**v2.2.0** — program + SDK + demo, 59 integration tests and model-based fuzzing, self-audited
+**v2.3.0** — program + SDK + demo, 63 integration tests and model-based fuzzing, self-audited
 before release (see [CHANGELOG.md](./CHANGELOG.md) · [SECURITY.md](./SECURITY.md) ·
-[threat model](./docs/threat-model.md)). Not independently audited. 2.2.0 adds freezing through
-Sentinel and the enforcement record; nothing existing changes. The devnet program runs 2.1.0
+[threat model](./docs/threat-model.md)). Not independently audited. 2.2 added freezing through
+Sentinel and the enforcement record; 2.3 lets the freeze authority leave Sentinel again. Nothing
+existing changes. The devnet program runs 2.1.0
 since 12 October 2026; mints set up before 2.1 call `update_extra_account_meta_list`
 once to get the delegate check. Breaking since 1.0.0: `PolicyConfig` gained `allow_confidential` and existing policy
 accounts must be recreated. A confidential transfer through a Sentinel mint, with the blocklist
@@ -127,7 +129,7 @@ enforced on the same transfer, runs end-to-end on devnet in
 ```bash
 anchor build -- --tools-version v1.57                                   # program
 anchor idl build -o sdk/src/idl/sentinel.json -t sdk/src/idl/sentinel.ts  # IDL
-anchor test --skip-build                                                # 59 integration tests
+anchor test --skip-build                                                # 63 integration tests
 cd tests-fuzz && cargo test --test model -- --nocapture                 # fuzzing (needs the build)
 cd sdk && npm install && npm run build                                  # SDK
 ```
