@@ -2,7 +2,7 @@
 //
 // Sentinel 2.2: blocking with a recorded reason, and freezing and thawing token accounts through
 // Sentinel's freeze-authority address. A hook can only refuse transfers; a frozen account refuses
-// everything.
+// everything. Sentinel 2.3: handing the freeze authority on, or giving it up, also with a reason.
 import * as anchor from "@coral-xyz/anchor";
 import {
   ASSOCIATED_TOKEN_PROGRAM_ID,
@@ -10,6 +10,7 @@ import {
   createApproveCheckedInstruction,
   createAssociatedTokenAccountInstruction,
   createBurnCheckedInstruction,
+  createFreezeAccountInstruction,
   createInitializeAccount3Instruction,
   createMintToInstruction,
   getAccountLen,
@@ -255,6 +256,104 @@ describe("sentinel — enforcement: reasons, freeze and thaw", () => {
     await setUpMint(none, null, [bob]);
     const error = await failure(() => client.freezeTokenAccount(none.publicKey, ata(bob.publicKey, none.publicKey), reason(0, "x")));
     assert.match(error, /FreezeAuthorityNotSentinel/);
+  });
+
+  describe("handing the freeze authority on (2.3)", () => {
+    it("lets only the policy authority hand it on", async () => {
+      const m = Keypair.generate();
+      await setUpMint(m, "sentinel", [bob]);
+      const byStranger = await client.setFreezeAuthorityInstruction({
+        mint: m.publicKey,
+        newFreezeAuthority: stranger.publicKey,
+        enforcement: reason(0, "x"),
+        authority: stranger.publicKey,
+      });
+      assert.match(await failure(() => send([byStranger], [stranger])), /Unauthorized/);
+      assert.ok((await client.getFreezeAuthority(m.publicKey))?.equals(client.freezeAuthority(m.publicKey)));
+    });
+
+    it("hands it to another address with the reason recorded, and Sentinel stops freezing until it comes back", async () => {
+      const m = Keypair.generate();
+      const successor = Keypair.generate();
+      await setUpMint(m, "sentinel", [bob]);
+      const bobAccount = ata(bob.publicKey, m.publicKey);
+
+      const signature = await client.setFreezeAuthority(
+        m.publicKey,
+        successor.publicKey,
+        reason(ENFORCEMENT_REASONS.internalReview, "MIGRATION-1"),
+      );
+      assert.ok((await client.getFreezeAuthority(m.publicKey))?.equals(successor.publicKey));
+      const events = await client.getEvents(signature);
+      assert.deepEqual(events.map((e) => e.name), ["freezeAuthorityChanged"]);
+      const changed = events[0].data;
+      assert.ok((changed.mint as PublicKey).equals(m.publicKey));
+      assert.ok((changed.newFreezeAuthority as PublicKey).equals(successor.publicKey));
+      assert.equal(changed.reasonCode, ENFORCEMENT_REASONS.internalReview);
+      assert.deepEqual(Array.from(changed.caseRef as number[]), Array.from(caseRef("MIGRATION-1", SALT)));
+      assert.ok((changed.authority as PublicKey).equals(payer.publicKey));
+
+      // Sentinel no longer holds it; the new holder freezes through Token-2022 directly.
+      assert.match(await failure(() => client.freezeTokenAccount(m.publicKey, bobAccount, reason(0, "x"))), /FreezeAuthorityNotSentinel/);
+      await send([createFreezeAccountInstruction(bobAccount, m.publicKey, successor.publicKey, [], TOKEN_2022_PROGRAM_ID)], [successor]);
+      assert.isTrue(await client.isFrozen(bobAccount));
+
+      // The new holder hands it back, and Sentinel can thaw again.
+      await client.setSentinelAsFreezeAuthority(m.publicKey, successor);
+      await client.thawTokenAccount(m.publicKey, bobAccount, reason(ENFORCEMENT_REASONS.caseClosed, "MIGRATION-1"));
+      assert.isFalse(await client.isFrozen(bobAccount));
+    });
+
+    it("gives it up for good", async () => {
+      const m = Keypair.generate();
+      await setUpMint(m, "sentinel", [bob]);
+      const signature = await client.setFreezeAuthority(m.publicKey, null, reason(ENFORCEMENT_REASONS.unspecified, "RENOUNCE"));
+      assert.isNull(await client.getFreezeAuthority(m.publicKey));
+      const changed = (await client.getEvents(signature)).find((e) => e.name === "freezeAuthorityChanged");
+      assert.isNull(changed?.data.newFreezeAuthority);
+
+      assert.match(
+        await failure(() => client.freezeTokenAccount(m.publicKey, ata(bob.publicKey, m.publicKey), reason(0, "x"))),
+        /FreezeAuthorityNotSentinel/,
+      );
+      // Nobody can bring it back: Token-2022 has no freeze authority left to sign.
+      await failure(() => client.setSentinelAsFreezeAuthority(m.publicKey, payer));
+      assert.isNull(await client.getFreezeAuthority(m.publicKey));
+    });
+
+    it("refuses Sentinel's own address and the default address, and mints Sentinel does not hold", async () => {
+      const m = Keypair.generate();
+      await setUpMint(m, "sentinel", [bob]);
+      // The SDK refuses before sending; the program refuses as well (InvalidAuthority).
+      for (const target of [client.freezeAuthority(m.publicKey), PublicKey.default]) {
+        let message = "";
+        try {
+          await client.setFreezeAuthorityInstruction({ mint: m.publicKey, newFreezeAuthority: target, enforcement: reason(0, "x") });
+        } catch (e) {
+          message = String(e);
+        }
+        assert.match(message, /newFreezeAuthority/);
+        const raw = await client.program.methods
+          .setFreezeAuthority(target, 0, Array.from(caseRef("x", SALT)))
+          .accountsPartial({
+            authority: payer.publicKey,
+            mint: m.publicKey,
+            policyConfig: client.policy(m.publicKey),
+            freezeAuthority: client.freezeAuthority(m.publicKey),
+            tokenProgram: TOKEN_2022_PROGRAM_ID,
+          })
+          .instruction();
+        assert.match(await failure(() => send([raw])), /InvalidAuthority/);
+      }
+      assert.ok((await client.getFreezeAuthority(m.publicKey))?.equals(client.freezeAuthority(m.publicKey)));
+
+      const issuerHeld = Keypair.generate();
+      await setUpMint(issuerHeld, payer.publicKey, [bob]);
+      assert.match(
+        await failure(() => client.setFreezeAuthority(issuerHeld.publicKey, stranger.publicKey, reason(0, "x"))),
+        /FreezeAuthorityNotSentinel/,
+      );
+    });
   });
 
   it("checks reason codes and case references before sending", async () => {

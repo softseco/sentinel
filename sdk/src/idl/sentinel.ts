@@ -8,7 +8,7 @@ export type Sentinel = {
   "address": "5fH1jj6XeZC96jPCxKiSb2onAXcs7f4rMeqMmSsP6puD",
   "metadata": {
     "name": "sentinel",
-    "version": "2.2.0",
+    "version": "2.3.0",
     "spec": "0.1.0",
     "description": "Programmable compliance for Token-2022 tokenized assets, built on Transfer Hooks."
   },
@@ -967,6 +967,119 @@ export type Sentinel = {
       "args": []
     },
     {
+      "name": "setFreezeAuthority",
+      "docs": [
+        "Hand the mint's freeze authority from Sentinel to `new_freeze_authority` (for example a",
+        "newer compliance program, or the issuer's own multisig), or give it up for good with `None`.",
+        "Only the policy authority may do this, and only while Sentinel holds the freeze authority.",
+        "From then on Sentinel can no longer freeze or thaw the mint's accounts; whoever holds the",
+        "freeze authority can hand it back with Token-2022 `SetAuthority`. The move is recorded in",
+        "`FreezeAuthorityChanged`, with the issuer's reason."
+      ],
+      "discriminator": [
+        159,
+        131,
+        149,
+        192,
+        109,
+        186,
+        68,
+        227
+      ],
+      "accounts": [
+        {
+          "name": "authority",
+          "signer": true,
+          "relations": [
+            "policyConfig"
+          ]
+        },
+        {
+          "name": "mint",
+          "writable": true
+        },
+        {
+          "name": "policyConfig",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  111,
+                  108,
+                  105,
+                  99,
+                  121
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "freezeAuthority",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  102,
+                  114,
+                  101,
+                  101,
+                  122,
+                  101,
+                  45,
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "tokenProgram",
+          "address": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
+        }
+      ],
+      "args": [
+        {
+          "name": "newFreezeAuthority",
+          "type": {
+            "option": "pubkey"
+          }
+        },
+        {
+          "name": "reasonCode",
+          "type": "u16"
+        },
+        {
+          "name": "caseRef",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        }
+      ]
+    },
+    {
       "name": "thawTokenAccount",
       "docs": [
         "Thaw a token account frozen with `freeze_token_account` (or by any earlier holder of the",
@@ -1548,6 +1661,19 @@ export type Sentinel = {
       ]
     },
     {
+      "name": "freezeAuthorityChanged",
+      "discriminator": [
+        145,
+        47,
+        128,
+        176,
+        128,
+        227,
+        80,
+        155
+      ]
+    },
+    {
       "name": "listEntryAdded",
       "discriminator": [
         254,
@@ -1856,6 +1982,45 @@ export type Sentinel = {
           },
           {
             "name": "thaw"
+          }
+        ]
+      }
+    },
+    {
+      "name": "freezeAuthorityChanged",
+      "docs": [
+        "Emitted by `set_freeze_authority` (2.3): Sentinel handed the mint's freeze authority to",
+        "`new_freeze_authority`, or gave it up (`None`). Freezes after this are no longer Sentinel's."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "newFreezeAuthority",
+            "type": {
+              "option": "pubkey"
+            }
+          },
+          {
+            "name": "reasonCode",
+            "type": "u16"
+          },
+          {
+            "name": "caseRef",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "authority",
+            "type": "pubkey"
           }
         ]
       }

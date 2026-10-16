@@ -19,6 +19,7 @@ import {
   createTransferCheckedWithTransferHookInstruction,
   getAccount,
   getAssociatedTokenAddressSync,
+  getMint,
   getMintLen,
   unpackAccount,
 } from "@solana/spl-token";
@@ -519,6 +520,39 @@ export class SentinelClient {
       : this.program.methods.freezeTokenAccount(reasonCode, ref).accountsPartial(accounts).instruction();
   }
 
+  /**
+   * `set_freeze_authority` (2.3), signed by `authority`: Sentinel hands the mint's freeze authority
+   * to `newFreezeAuthority`, or gives it up for good with `null`. Check the address twice: once it
+   * is set, only that address can freeze, thaw or hand the authority on.
+   */
+  setFreezeAuthorityInstruction(params: {
+    mint: PublicKey;
+    newFreezeAuthority: PublicKey | null;
+    enforcement: Enforcement;
+    authority?: PublicKey;
+  }): Promise<TransactionInstruction> {
+    const { mint, newFreezeAuthority } = params;
+    const [reasonCode, ref] = enforcementArgs(params.enforcement);
+    if (newFreezeAuthority !== null) {
+      if (newFreezeAuthority.equals(PublicKey.default)) {
+        throw new Error("newFreezeAuthority is the default address; pass null to give the freeze authority up");
+      }
+      if (newFreezeAuthority.equals(this.freezeAuthority(mint))) {
+        throw new Error("newFreezeAuthority is Sentinel's own freeze-authority address; nothing would change");
+      }
+    }
+    return this.program.methods
+      .setFreezeAuthority(newFreezeAuthority, reasonCode, ref)
+      .accountsPartial({
+        authority: params.authority ?? this.payer.publicKey,
+        mint,
+        policyConfig: this.policy(mint),
+        freezeAuthority: this.freezeAuthority(mint),
+        tokenProgram: TOKEN_2022_PROGRAM_ID,
+      })
+      .instruction();
+  }
+
   // ---- Enforcement (provider wallet as the policy authority) ----
 
   /** Blocklist `wallet`, recording why. */
@@ -591,6 +625,24 @@ export class SentinelClient {
     );
     const extra = currentFreezeAuthority.publicKey.equals(this.payer.publicKey) ? [] : [currentFreezeAuthority];
     return this.send([ix], extra);
+  }
+
+  /**
+   * Hand the mint's freeze authority from Sentinel to `newFreezeAuthority`, or give it up for good
+   * with `null` (2.3), recording why. Sentinel then can no longer freeze or thaw; the new holder can
+   * hand it back with `setSentinelAsFreezeAuthority`.
+   */
+  async setFreezeAuthority(
+    mint: PublicKey,
+    newFreezeAuthority: PublicKey | null,
+    enforcement: Enforcement,
+  ): Promise<string> {
+    return this.send([await this.setFreezeAuthorityInstruction({ mint, newFreezeAuthority, enforcement })]);
+  }
+
+  /** The mint's freeze authority, or `null` if it has none. */
+  async getFreezeAuthority(mint: PublicKey): Promise<PublicKey | null> {
+    return (await getMint(this.connection, mint, "confirmed", TOKEN_2022_PROGRAM_ID)).freezeAuthority;
   }
 
   /** Every token account of `mint` held by `owner`, with its state. */

@@ -17,7 +17,9 @@
 //! Sentinel (2.2): the mint's freeze authority is Sentinel's freeze-authority address for the mint,
 //! and `freeze_token_account` / `thaw_token_account` sign for it. Every block, unblock, freeze and
 //! thaw made with a reason emits `EnforcementAction` with the issuer's reason code and case
-//! reference, so the record of what was done and why stays on-chain.
+//! reference, so the record of what was done and why stays on-chain. The policy authority can hand
+//! the freeze authority on to another address, or give it up, with `set_freeze_authority` (2.3);
+//! that move is recorded too (`FreezeAuthorityChanged`).
 //!
 //! Confidential transfers are a special case. Token-2022 hides the amount from
 //! the hook, so the limit rule cannot be evaluated at all — it is unenforceable
@@ -31,7 +33,9 @@ use anchor_lang::solana_program::program_option::COption;
 use anchor_lang::system_program::{
     allocate, assign, create_account, transfer, Allocate, Assign, CreateAccount, Transfer,
 };
-use anchor_spl::token_2022::{self as token_2022, Token2022};
+use anchor_spl::token_2022::{
+    self as token_2022, spl_token_2022::instruction::AuthorityType, Token2022,
+};
 use anchor_spl::token_interface::Mint;
 use spl_tlv_account_resolution::{
     account::ExtraAccountMeta, seeds::Seed, state::ExtraAccountMetaList,
@@ -317,6 +321,52 @@ pub mod sentinel {
     ) -> Result<()> {
         set_frozen(&ctx, false)?;
         emit_frozen(&ctx, EnforcementKind::Thaw, reason_code, case_ref);
+        Ok(())
+    }
+
+    /// Hand the mint's freeze authority from Sentinel to `new_freeze_authority` (for example a
+    /// newer compliance program, or the issuer's own multisig), or give it up for good with `None`.
+    /// Only the policy authority may do this, and only while Sentinel holds the freeze authority.
+    /// From then on Sentinel can no longer freeze or thaw the mint's accounts; whoever holds the
+    /// freeze authority can hand it back with Token-2022 `SetAuthority`. The move is recorded in
+    /// `FreezeAuthorityChanged`, with the issuer's reason.
+    pub fn set_freeze_authority(
+        ctx: Context<SetFreezeAuthority>,
+        new_freeze_authority: Option<Pubkey>,
+        reason_code: u16,
+        case_ref: [u8; 32],
+    ) -> Result<()> {
+        let sentinel = ctx.accounts.freeze_authority.key();
+        if let Some(new) = new_freeze_authority {
+            // To give the freeze authority up, pass None: the default address is nobody's key, and
+            // handing it to Sentinel itself would change nothing.
+            require!(
+                new != Pubkey::default() && new != sentinel,
+                SentinelError::InvalidAuthority
+            );
+        }
+        let mint = ctx.accounts.mint.key();
+        let bump = [ctx.bumps.freeze_authority];
+        let signer_seeds: &[&[&[u8]]] = &[&[FREEZE_AUTHORITY_SEED, mint.as_ref(), &bump]];
+        token_2022::set_authority(
+            CpiContext::new_with_signer(
+                ctx.accounts.token_program.to_account_info(),
+                token_2022::SetAuthority {
+                    current_authority: ctx.accounts.freeze_authority.to_account_info(),
+                    account_or_mint: ctx.accounts.mint.to_account_info(),
+                },
+                signer_seeds,
+            ),
+            AuthorityType::FreezeAccount,
+            new_freeze_authority,
+        )?;
+        emit!(FreezeAuthorityChanged {
+            mint,
+            new_freeze_authority,
+            reason_code,
+            case_ref,
+            authority: ctx.accounts.authority.key(),
+        });
         Ok(())
     }
 
@@ -1027,6 +1077,31 @@ pub struct SetFrozen<'info> {
     pub token_program: Program<'info, Token2022>,
 }
 
+#[derive(Accounts)]
+pub struct SetFreezeAuthority<'info> {
+    pub authority: Signer<'info>,
+
+    #[account(
+        mut,
+        constraint = mint.freeze_authority == COption::Some(freeze_authority.key())
+            @ SentinelError::FreezeAuthorityNotSentinel,
+    )]
+    pub mint: InterfaceAccount<'info, Mint>,
+
+    #[account(
+        seeds = [POLICY_SEED, mint.key().as_ref()],
+        bump = policy_config.bump,
+        has_one = authority @ SentinelError::Unauthorized,
+    )]
+    pub policy_config: Account<'info, PolicyConfig>,
+
+    /// CHECK: Sentinel's freeze-authority PDA for `mint`; holds no data and signs the CPI.
+    #[account(seeds = [FREEZE_AUTHORITY_SEED, mint.key().as_ref()], bump)]
+    pub freeze_authority: UncheckedAccount<'info>,
+
+    pub token_program: Program<'info, Token2022>,
+}
+
 /// Accounts for the Transfer Hook `Execute`. Order is fixed by the interface:
 /// source, mint, destination, source authority, meta-list PDA, then our declared
 /// extra accounts (policy, sender block, recipient block, recipient allow).
@@ -1178,6 +1253,17 @@ pub struct EnforcementAction {
     /// The frozen or thawed token account; the default address for a block or unblock.
     pub token_account: Pubkey,
     pub action: EnforcementKind,
+    pub reason_code: u16,
+    pub case_ref: [u8; 32],
+    pub authority: Pubkey,
+}
+
+/// Emitted by `set_freeze_authority` (2.3): Sentinel handed the mint's freeze authority to
+/// `new_freeze_authority`, or gave it up (`None`). Freezes after this are no longer Sentinel's.
+#[event]
+pub struct FreezeAuthorityChanged {
+    pub mint: Pubkey,
+    pub new_freeze_authority: Option<Pubkey>,
     pub reason_code: u16,
     pub case_ref: [u8; 32],
     pub authority: Pubkey,
